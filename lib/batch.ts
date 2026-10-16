@@ -18,9 +18,12 @@ export interface BatchSizes {
 /** Sizes a batch for `target`, or null if HACK_FRACTION of its money is under one thread. */
 export function sizeBatch(target: string): BatchSizes | null {
   const ns = getNs()
-  const hack = Math.floor(
-    ns.hackAnalyzeThreads(target, ns.getServerMaxMoney(target) * HACK_FRACTION),
-  )
+  // Sized from the fraction one thread steals, not `hackAnalyzeThreads`, which
+  // returns -1 whenever the server holds less money than asked for (so for any
+  // server that still needs growing).
+  const stolenPerThread = ns.hackAnalyze(target)
+  const hack =
+    stolenPerThread > 0 ? Math.floor(HACK_FRACTION / stolenPerThread) : 0
 
   if (hack < 1) return null
 
