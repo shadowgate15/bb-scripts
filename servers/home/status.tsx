@@ -22,10 +22,15 @@ const CANDIDATES_EVERY = 5
 /** A snapshot this long past when it should have updated means the batcher is gone. */
 const STALE_MS = 15_000
 
-interface Pool {
+interface RamUse {
   used: number
   max: number
-  hosts: number
+}
+
+interface Pool {
+  home: RamUse
+  /** Every rooted server but home, including purchased ones. */
+  others: RamUse & { hosts: number }
 }
 
 interface TargetLive {
@@ -105,10 +110,15 @@ async function readPool(ns: NS): Promise<Pool | null> {
   try {
     const hosts = await rootAll()
 
+    const use = (list: string[]): RamUse => ({
+      used: list.reduce((sum, h) => sum + ns.getServerUsedRam(h), 0),
+      max: list.reduce((sum, h) => sum + ns.getServerMaxRam(h), 0),
+    })
+    const others = hosts.filter((h) => h !== 'home')
+
     return {
-      hosts: hosts.length,
-      used: hosts.reduce((sum, h) => sum + ns.getServerUsedRam(h), 0),
-      max: hosts.reduce((sum, h) => sum + ns.getServerMaxRam(h), 0),
+      home: use(['home']),
+      others: { ...use(others), hosts: others.length },
     }
   } catch {
     return null
@@ -237,6 +247,11 @@ function Dashboard({
         <Panel
           title={`batch · ${fmt.percent(status.fraction, 0)} of max money`}
         >
+          <Dim>
+            {status.homeCores !== null && status.homeCores > 1
+              ? `grow + weaken pinned to home (${status.homeCores} cores) · hack on any server`
+              : 'all jobs spread across the pool'}
+          </Dim>
           <div style={{ display: 'flex', gap: 14 }}>
             <Stat
               label="hack"
@@ -266,14 +281,12 @@ function Dashboard({
         </Panel>
       )}
 
-      <Panel title={pool ? `pool · ${pool.hosts} servers` : 'pool'}>
+      <Panel title="pool">
         {pool ? (
-          <Bar
-            label="ram"
-            value={pool.used / pool.max}
-            color={pool.used / pool.max > 0.9 ? c.pink : c.teal}
-            right={`${fmt.ram(pool.used)} / ${fmt.ram(pool.max)}`}
-          />
+          <>
+            {ramBar('home', pool.home, fmt)}
+            {ramBar(`${pool.others.hosts} servers`, pool.others, fmt)}
+          </>
         ) : (
           <Dim>rooter not responding</Dim>
         )}
@@ -354,6 +367,20 @@ function Panel({
       )}
       {children}
     </div>
+  )
+}
+
+/** Called as a function, like Dashboard, so `fmt` runs before React renders. */
+function ramBar(label: string, use: RamUse, fmt: NS['format']) {
+  const share = use.max > 0 ? use.used / use.max : 0
+
+  return (
+    <Bar
+      label={label}
+      value={share}
+      color={share > 0.9 ? c.pink : c.teal}
+      right={`${fmt.ram(use.used)} / ${fmt.ram(use.max)}`}
+    />
   )
 }
 
