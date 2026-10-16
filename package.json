@@ -1,5 +1,5 @@
 {
-  "name": "bb-external-editor",
+  "name": "bb-scripts",
   "version": "1.1.0",
   "description": "template for external editors for the game bitburner",
   "main": "index.js",
@@ -8,14 +8,14 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/shyguy1412/bb-external-editor.git"
+    "url": "git+https://github.com/shadowgate15/bb-scripts.git"
   },
-  "author": "Shy",
+  "author": "shadowgate15",
   "license": "MIT",
   "bugs": {
-    "url": "https://github.com/shyguy1412/bb-external-editor/issues"
+    "url": "https://github.com/shadowgate15/bb-scripts/issues"
   },
-  "homepage": "https://github.com/shyguy1412/bb-external-editor#readme",
+  "homepage": "https://github.com/shadowgate15/bb-scripts#readme",
   "dependencies": {
     "@types/react": "^18.3.4",
     "@types/react-dom": "^18.3.0",
