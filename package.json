@@ -4,7 +4,8 @@
   "description": "template for external editors for the game bitburner",
   "main": "index.js",
   "scripts": {
-    "start": "node ./config.mjs"
+    "start": "node ./config.mjs",
+    "check": "biome check --write"
   },
   "repository": {
     "type": "git",
@@ -21,5 +22,8 @@
     "@types/react-dom": "^18.3.0",
     "esbuild": "^0.23.1",
     "esbuild-bitburner-plugin": "^1.6.3"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.5.15"
   }
 }
