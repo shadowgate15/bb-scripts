@@ -214,6 +214,25 @@ function Dashboard({
         </Panel>
       )}
 
+      {status?.phase === 'prepping' && status.prepThreads && (
+        <Panel title="prep">
+          <div style={{ display: 'flex', gap: 14 }}>
+            <Stat
+              label="weaken"
+              value={fmt.number(status.prepThreads.weaken, 0)}
+              color={c.blue}
+              small
+            />
+            <Stat
+              label="grow"
+              value={fmt.number(status.prepThreads.grow, 0)}
+              color={c.green}
+              small
+            />
+          </div>
+        </Panel>
+      )}
+
       {status?.sizes && status.fraction !== null && (
         <Panel
           title={`batch · ${fmt.percent(status.fraction, 0)} of max money`}

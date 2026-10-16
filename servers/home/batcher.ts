@@ -54,6 +54,7 @@ export const main = entry(async (ns) => {
     estIncomePerSec: 0,
     batchesLaunched: 0,
     inFlight: 0,
+    prepThreads: null,
     prepReadyAt: null,
     message: 'starting',
   }
@@ -107,6 +108,11 @@ export const main = entry(async (ns) => {
         const { ok } = await runAll(prep.combined)
         const launched = ok ? 1 : (await run(prep.fallback)).launched
         const what = ok ? 'grow+weaken' : prep.fallback.script
+        const jobs = ok ? prep.combined : [prep.fallback]
+        const threadsOf = (script: string) =>
+          jobs
+            .filter((j) => j.script === script)
+            .reduce((sum, j) => sum + j.threads, 0)
 
         ns.print(
           `prep ${info.host}: ${what} (${launched > 0 ? 'launched' : 'no RAM'})`,
@@ -117,6 +123,13 @@ export const main = entry(async (ns) => {
           fraction: info.fraction,
           sizes: null,
           estIncomePerSec: info.incomePerSec,
+          prepThreads:
+            launched > 0
+              ? {
+                  weaken: threadsOf('workers/weaken.js'),
+                  grow: threadsOf('workers/grow.js'),
+                }
+              : null,
           prepReadyAt: launched > 0 ? Date.now() + prep.ms : null,
           message:
             launched > 0 ? `prepping with ${what}` : 'prep waiting for RAM',
@@ -178,6 +191,7 @@ export const main = entry(async (ns) => {
       fraction: info.fraction,
       sizes: batch.sizes,
       estIncomePerSec: info.incomePerSec,
+      prepThreads: null,
       prepReadyAt: null,
       message: ok
         ? 'launching batches'
