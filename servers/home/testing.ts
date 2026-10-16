@@ -1,5 +1,5 @@
-import { entry } from "@/lib/entry";
+import { entry } from '@/lib/entry'
 
 export const main = entry((ns) => {
-  ns.tprint("Hello, world!");
-});
+  ns.tprint('Hello, world!')
+})

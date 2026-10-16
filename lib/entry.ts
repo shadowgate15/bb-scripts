@@ -1,9 +1,9 @@
-import { setNs } from "@ns";
+import { setNs } from '@ns'
 
 export function entry(fn: (ns: NS) => void | Promise<void>) {
   return async (_ns: NS) => {
-    setNs(_ns);
+    setNs(_ns)
 
-    return fn(_ns);
-  };
+    return fn(_ns)
+  }
 }
