@@ -10,3 +10,19 @@ Types for the bitburner api are included at `./NetscriptDefinitions.d.ts`
 
 /servers - Scripts that run on servers, they are bundled using esbuild when uploaded to Bitburner.
 /lib - Libraries for use in scripts
+
+## RAM
+
+Every script's RAM cost is set by the `ns` functions its bundle references, and each server has limited RAM, so keep scripts as lean as possible.
+
+- Split code by who runs it (e.g. client vs server) so a script's bundle only contains the `ns` calls it needs.
+- Import from the specific module (`port-rpc/client`), not a barrel that re-exports both sides.
+- Keep shared definitions (types, constants, channels) free of `ns` calls so both sides can import them for free.
+- Check the cost of an `ns` function in `NetscriptDefinitions.d.ts` ("RAM cost") before adding it to shared code.
+
+## Netscript gotchas
+
+- **One pending async `ns` call per script.** While `ns.sleep`, `ns.hack`, etc. is pending, any other `ns` call (even `getPortHandle`) throws a concurrency error. Use `ns.asleep` for waits that overlap other work; it doesn't block.
+- **Killed scripts' pending awaits still resume.** Port handle methods don't check whether the script is dead, but every `ns` call throws once it is. After any `await`, make an `ns` call (e.g. re-fetch the port handle) before touching ports, or a dead script can read or clear data meant for a live one. A killed server also stays in a port's `nextWrite` wait list until the game reloads, so reload the game after changing server code you've already run.
+- **Tail logs keep only 50 lines.** Use `ns.disableLog('asleep')` etc. in debugging scripts rather than `disableLog('ALL')`, which can also hide runtime errors.
+- **Ports are shared across all scripts and reset only on game restart.** Port-rpc (`lib/port-rpc`) hands each service a disjoint port range keyed by its `PORTS` id; add new ids by appending to the enum, never reordering.
