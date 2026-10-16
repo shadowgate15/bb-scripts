@@ -9,4 +9,5 @@ export enum PORTS {
   RUNNER,
   RAM_POOL,
   TARGET,
+  HOME_UPGRADE,
 }
