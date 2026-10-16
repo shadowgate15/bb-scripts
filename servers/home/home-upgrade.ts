@@ -18,7 +18,7 @@ export const main = entry(async (ns) => {
         ram: ns.getServerMaxRam('home'),
         ramCost: ns.singularity.getUpgradeHomeRamCost(),
       }),
-      upgradeRam: () => ns.singularity.upgradeHomeRam(),
+      buyRam: () => ns.singularity.upgradeHomeRam(),
     },
     { onError: (e) => ns.print(`home-upgrade: ${e}`) },
   )

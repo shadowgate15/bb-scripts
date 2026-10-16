@@ -7,6 +7,6 @@ export function quoteHomeUpgrade() {
   return client().call('quote', undefined)
 }
 
-export function upgradeHomeRam() {
-  return client().call('upgradeRam', undefined)
+export function buyHomeRam() {
+  return client().call('buyRam', undefined)
 }

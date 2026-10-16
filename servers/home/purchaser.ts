@@ -1,5 +1,5 @@
 import { entry } from '@/lib/entry'
-import { quoteHomeUpgrade, upgradeHomeRam } from '@/lib/home-upgrade/client'
+import { buyHomeRam, quoteHomeUpgrade } from '@/lib/home-upgrade/client'
 import {
   isDone,
   nextPurchase,
@@ -85,7 +85,7 @@ async function execute(ns: NS, purchase: Purchase): Promise<boolean> {
       return ok
     }
     case 'home': {
-      const ok = await upgradeHomeRam()
+      const ok = await buyHomeRam()
 
       ns.print(`home RAM upgrade ${ok ? 'bought' : 'failed'}`)
 
