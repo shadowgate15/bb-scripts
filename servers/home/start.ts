@@ -8,7 +8,7 @@ const SERVICES = [
   'target.js',
 ]
 
-/** Starts every service, then the controller. Safe to re-run. */
+/** Starts every service, then the batcher. Safe to re-run. */
 export const main = entry(async (ns) => {
   for (const service of SERVICES) {
     if (!ns.isRunning(service, 'home')) {
@@ -18,7 +18,7 @@ export const main = entry(async (ns) => {
 
   await ns.sleep(500)
 
-  if (!ns.isRunning('controller.js', 'home')) {
-    ns.run('controller.js')
+  if (!ns.isRunning('batcher.js', 'home')) {
+    ns.run('batcher.js')
   }
 })
