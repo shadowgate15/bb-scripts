@@ -3,21 +3,50 @@ import { serve } from '@/lib/port-rpc/server'
 import { type RooterRpc, rooterChannel } from '@/lib/rooter/protocol'
 import { getServerList } from '@/lib/server-list/get-server-list'
 
+/**
+ * How long a `rootAll` result is reused. Rooting only changes when your hacking
+ * level, programs or network do, so a few seconds of staleness costs little and
+ * saves a server-list round trip plus a scan on every call.
+ */
+const CACHE_TTL_MS = 5_000
+
 /** Opens ports and nukes every server it can, on request. */
 export const main = entry(async (ns) => {
+  let cached: { servers: string[]; expires: number } | null = null
+  let refresh: Promise<string[]> | null = null
+
+  const rootEverything = async () => {
+    const rooted: string[] = []
+
+    for (const server of await getServerList()) {
+      if (tryRoot(ns, server)) {
+        rooted.push(server)
+      }
+    }
+
+    return rooted
+  }
+
   await serve<RooterRpc>(
     rooterChannel,
     {
       rootAll: async () => {
-        const rooted: string[] = []
-
-        for (const server of await getServerList()) {
-          if (tryRoot(ns, server)) {
-            rooted.push(server)
-          }
+        if (cached !== null && cached.expires > Date.now()) {
+          return cached.servers
         }
 
-        return rooted
+        // Callers that arrive mid-refresh share it instead of starting another.
+        refresh ??= rootEverything()
+          .then((servers) => {
+            cached = { servers, expires: Date.now() + CACHE_TTL_MS }
+
+            return servers
+          })
+          .finally(() => {
+            refresh = null
+          })
+
+        return refresh
       },
     },
     { onError: (e) => ns.print(`rooter: ${e}`) },
