@@ -1,6 +1,12 @@
 import { entry } from '@/lib/entry'
 
-const SERVICES = ['server-list.js', 'rooter.js', 'ram-pool.js', 'runner.js']
+const SERVICES = [
+  'server-list.js',
+  'rooter.js',
+  'ram-pool.js',
+  'runner.js',
+  'target.js',
+]
 
 /** Starts every service, then the controller. Safe to re-run. */
 export const main = entry(async (ns) => {

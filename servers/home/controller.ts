@@ -1,6 +1,6 @@
 import { entry } from '@/lib/entry'
-import { rootAll } from '@/lib/rooter/root-all'
 import { run } from '@/lib/runner/run'
+import { getBestTarget } from '@/lib/target/client'
 
 const SECURITY_SLACK = 1
 const MONEY_FLOOR = 0.9
@@ -15,7 +15,7 @@ export const main = entry(async (ns) => {
   ns.disableLog('ALL')
 
   while (true) {
-    const target = await pickTarget(ns)
+    const target = await getBestTarget()
 
     if (target === null) {
       ns.print('no hackable target yet')
@@ -30,30 +30,6 @@ export const main = entry(async (ns) => {
     await ns.sleep(launched > 0 ? ms + FINISH_BUFFER_MS : IDLE_MS)
   }
 })
-
-/** Best money per weaken-second among servers we can hack at half our level. */
-async function pickTarget(ns: NS): Promise<string | null> {
-  let best: string | null = null
-  let bestScore = 0
-
-  for (const host of await rootAll()) {
-    const maxMoney = ns.getServerMaxMoney(host)
-
-    if (maxMoney <= 0) continue
-    if (ns.getServerRequiredHackingLevel(host) > ns.getHackingLevel() / 2) {
-      continue
-    }
-
-    const score = maxMoney / ns.getWeakenTime(host)
-
-    if (score > bestScore) {
-      best = host
-      bestScore = score
-    }
-  }
-
-  return best
-}
 
 /** The next step for `target`: [worker script, threads, duration in ms]. */
 function plan(ns: NS, target: string): [string, number, number] {
