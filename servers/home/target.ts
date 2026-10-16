@@ -1,4 +1,4 @@
-import { batchRam, HACK_FRACTION, SPACING_MS, sizeBatch } from '@/lib/batch'
+import { chooseBatch } from '@/lib/batch'
 import { HOME_RESERVED_RAM } from '@/lib/constants/ram'
 import { entry } from '@/lib/entry'
 import { serve } from '@/lib/port-rpc/server'
@@ -58,30 +58,15 @@ export const main = entry(async (ns) => {
         continue
       }
 
-      const sizes = sizeBatch(host)
+      const plan = chooseBatch(host, poolRam)
 
-      if (sizes === null) {
-        reject(host, 'a batch would hack under one thread')
+      if ('reason' in plan) {
+        reject(host, plan.reason)
         continue
       }
 
       const weakenMs = ns.getWeakenTime(host)
-      const ramPerBatch = batchRam(sizes)
-      const inFlight = Math.min(
-        Math.floor(weakenMs / SPACING_MS),
-        Math.floor(poolRam / ramPerBatch),
-      )
-
-      if (inFlight < 1) {
-        reject(
-          host,
-          `a batch needs ${ramPerBatch.toFixed(1)}GB, pool has ${poolRam.toFixed(1)}GB`,
-        )
-        continue
-      }
-
-      const incomePerSec =
-        (inFlight * HACK_FRACTION * maxMoney) / (weakenMs / 1000)
+      const { incomePerSec } = plan
       const prepMs = estimatePrepMs(host, poolRam, weakenMs)
 
       targets.push({
@@ -90,6 +75,8 @@ export const main = entry(async (ns) => {
         minSecurity: ns.getServerMinSecurityLevel(host),
         prepMs,
         incomePerSec,
+        fraction: plan.fraction,
+        inFlight: plan.inFlight,
         score: (incomePerSec * HORIZON_S) / (HORIZON_S + prepMs / 1000),
       })
     }
