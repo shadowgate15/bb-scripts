@@ -76,6 +76,7 @@ export const main = entry(async (ns) => {
         prepMs,
         incomePerSec,
         fraction: plan.fraction,
+        homeCores: plan.homeCores,
         inFlight: plan.inFlight,
         score: (incomePerSec * HORIZON_S) / (HORIZON_S + prepMs / 1000),
       })

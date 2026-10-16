@@ -1,4 +1,5 @@
 import { getNs } from '@ns'
+import { HOME_RESERVED_RAM } from './constants/ram'
 
 /** Gap between the four landings of one batch, in ms. */
 export const GAP_MS = 50
@@ -31,6 +32,11 @@ export interface BatchPlan {
   fraction: number
   sizes: BatchSizes
   ramPerBatch: number
+  /**
+   * Cores grow and weaken are sized for. Above 1 they only reach that size on
+   * home, so the batcher pins them there; at 1 they may run anywhere.
+   */
+  homeCores: number
   /** Batches that fit at once: limited by RAM and by how long a batch runs. */
   inFlight: number
   incomePerSec: number
@@ -61,8 +67,21 @@ function weakenMsWhenPrepped(target: string): number {
   )
 }
 
-/** Sizes a batch stealing `fraction` of max money, or null if that's under one hack thread. */
-export function sizeBatch(target: string, fraction: number): BatchSizes | null {
+/** Cores on home, which boost grow and weaken threads run there. */
+export function homeCoreCount(): number {
+  return getNs().getServer('home').cpuCores
+}
+
+/**
+ * Sizes a batch stealing `fraction` of max money, or null if that's under one
+ * hack thread. Grow and weaken are sized for `cores`, so with more than 1 they
+ * must run on home or they fall short.
+ */
+export function sizeBatch(
+  target: string,
+  fraction: number,
+  cores = 1,
+): BatchSizes | null {
   const ns = getNs()
   // Sized from the share one thread steals, not `hackAnalyzeThreads`, which
   // returns -1 whenever the server holds less money than asked for (so for any
@@ -73,8 +92,8 @@ export function sizeBatch(target: string, fraction: number): BatchSizes | null {
 
   if (hack < 1) return null
 
-  const grow = Math.ceil(ns.growthAnalyze(target, 1 / (1 - fraction)))
-  const weakenPerThread = ns.weakenAnalyze(1)
+  const grow = Math.ceil(ns.growthAnalyze(target, 1 / (1 - fraction), cores))
+  const weakenPerThread = ns.weakenAnalyze(1, cores)
 
   return {
     hack,
@@ -83,20 +102,27 @@ export function sizeBatch(target: string, fraction: number): BatchSizes | null {
     ),
     grow,
     weakenAfterGrow: Math.ceil(
-      ns.growthAnalyzeSecurity(grow, target) / weakenPerThread,
+      ns.growthAnalyzeSecurity(grow, target, cores) / weakenPerThread,
     ),
   }
 }
 
-/** RAM one batch holds while in flight, in GB. */
-export function batchRam(sizes: BatchSizes): number {
+/** RAM the grow and weaken threads of one batch hold, in GB. */
+export function growWeakenRam(sizes: BatchSizes): number {
   const ns = getNs()
-  const weakenRam = ns.getScriptRam('workers/weaken.js', 'home')
 
   return (
-    sizes.hack * ns.getScriptRam('workers/hack.js', 'home') +
     sizes.grow * ns.getScriptRam('workers/grow.js', 'home') +
-    (sizes.weakenAfterHack + sizes.weakenAfterGrow) * weakenRam
+    (sizes.weakenAfterHack + sizes.weakenAfterGrow) *
+      ns.getScriptRam('workers/weaken.js', 'home')
+  )
+}
+
+/** RAM one batch holds while in flight, in GB. */
+export function batchRam(sizes: BatchSizes): number {
+  return (
+    sizes.hack * getNs().getScriptRam('workers/hack.js', 'home') +
+    growWeakenRam(sizes)
   )
 }
 
@@ -118,30 +144,47 @@ export function chooseBatch(
     ns.hackAnalyzeChance(target) * preppedBoost(target),
   )
   const usableRam = poolRam * POOL_USE
+  const homeRam = (ns.getServerMaxRam('home') - HOME_RESERVED_RAM) * POOL_USE
+  const cores = homeCoreCount()
+  // Unpinned (grow and weaken anywhere, sized for 1 core), and, if home has
+  // spare cores, pinned to home (smaller batches, but only home's RAM for them).
+  const coreOptions = cores > 1 ? [1, cores] : [1]
   let best: BatchPlan | null = null
   let smallestRam = Number.POSITIVE_INFINITY
 
-  for (const fraction of FRACTIONS) {
-    const sizes = sizeBatch(target, fraction)
+  for (const homeCores of coreOptions) {
+    for (const fraction of FRACTIONS) {
+      const sizes = sizeBatch(target, fraction, homeCores)
 
-    if (sizes === null) continue
+      if (sizes === null) continue
 
-    const ramPerBatch = batchRam(sizes)
-    const inFlight = Math.min(
-      Math.floor(weakenMs / SPACING_MS),
-      Math.floor(usableRam / ramPerBatch),
-    )
+      const ramPerBatch = batchRam(sizes)
+      const inFlight = Math.min(
+        Math.floor(weakenMs / SPACING_MS),
+        Math.floor(usableRam / ramPerBatch),
+        homeCores > 1
+          ? Math.floor(homeRam / growWeakenRam(sizes))
+          : Number.POSITIVE_INFINITY,
+      )
 
-    smallestRam = Math.min(smallestRam, ramPerBatch)
+      smallestRam = Math.min(smallestRam, ramPerBatch)
 
-    if (inFlight < 1) continue
+      if (inFlight < 1) continue
 
-    // A failed hack steals nothing, but its grow and weaken still run.
-    const incomePerSec =
-      (inFlight * fraction * maxMoney * hackChance) / (weakenMs / 1000)
+      // A failed hack steals nothing, but its grow and weaken still run.
+      const incomePerSec =
+        (inFlight * fraction * maxMoney * hackChance) / (weakenMs / 1000)
 
-    if (best === null || incomePerSec > best.incomePerSec) {
-      best = { fraction, sizes, ramPerBatch, inFlight, incomePerSec }
+      if (best === null || incomePerSec > best.incomePerSec) {
+        best = {
+          fraction,
+          sizes,
+          ramPerBatch,
+          homeCores,
+          inFlight,
+          incomePerSec,
+        }
+      }
     }
   }
 

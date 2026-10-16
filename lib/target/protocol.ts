@@ -11,6 +11,8 @@ export interface TargetInfo {
   incomePerSec: number
   /** Share of max money each batch steals at the best income for our RAM. */
   fraction: number
+  /** Cores grow and weaken are sized for; above 1 they must run on home. */
+  homeCores: number
   /** Batches that fit in flight at that fraction. */
   inFlight: number
   /** Ranking value: income per second discounted by the prep it needs first. */

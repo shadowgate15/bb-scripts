@@ -26,6 +26,8 @@ export interface BatcherStatus {
   /** Share of max money each batch steals. */
   fraction: number | null
   sizes: BatchSizes | null
+  /** Cores grow and weaken are pinned to home for, or 1 if they run anywhere. */
+  homeCores: number | null
   /** Income the target service expects from this target, per second. */
   estIncomePerSec: number
   batchesLaunched: number

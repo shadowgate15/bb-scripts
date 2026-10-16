@@ -51,6 +51,7 @@ export const main = entry(async (ns) => {
     target: null,
     fraction: null,
     sizes: null,
+    homeCores: null,
     estIncomePerSec: 0,
     batchesLaunched: 0,
     inFlight: 0,
@@ -122,6 +123,7 @@ export const main = entry(async (ns) => {
           target: info.host,
           fraction: info.fraction,
           sizes: null,
+          homeCores: null,
           estIncomePerSec: info.incomePerSec,
           prepThreads:
             launched > 0
@@ -165,7 +167,13 @@ export const main = entry(async (ns) => {
       continue
     }
 
-    const batch = planBatch(ns, info.host, batchId, info.fraction)
+    const batch = planBatch(
+      ns,
+      info.host,
+      batchId,
+      info.fraction,
+      info.homeCores,
+    )
 
     if (batch === null) {
       ns.print(`${info.host}: too little money to batch`)
@@ -190,6 +198,7 @@ export const main = entry(async (ns) => {
       target: info.host,
       fraction: info.fraction,
       sizes: batch.sizes,
+      homeCores: info.homeCores,
       estIncomePerSec: info.incomePerSec,
       prepThreads: null,
       prepReadyAt: null,
@@ -253,8 +262,9 @@ function planBatch(
   target: string,
   id: number,
   fraction: number,
+  homeCores: number,
 ): Batch | null {
-  const sizes = sizeBatch(target, fraction)
+  const sizes = sizeBatch(target, fraction, homeCores)
 
   if (sizes === null) return null
 
@@ -268,6 +278,8 @@ function planBatch(
     script,
     threads,
     args: [target, landsAt - runMs, id],
+    // Sized for home's cores, so only home gives them their full effect.
+    host: homeCores > 1 && script !== 'workers/hack.js' ? 'home' : undefined,
   })
 
   return {

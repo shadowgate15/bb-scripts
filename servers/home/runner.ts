@@ -13,6 +13,7 @@ export const main = entry(async (ns) => {
           jobs: jobs.map((job) => ({
             ramPerThread: ns.getScriptRam(job.script, 'home'),
             threads: job.threads,
+            host: job.host,
           })),
         })
 

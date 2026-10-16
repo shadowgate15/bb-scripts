@@ -99,9 +99,22 @@ export const main = entry(async (ns) => {
       reserveAll: async ({ jobs, ttlMs = DEFAULT_TTL_MS }) => {
         const hosts = await rootAll()
         const held = new Map<string, number>()
-        const placements = jobs.map((job) =>
-          place(hosts, job.ramPerThread, job.threads, held),
-        )
+        const placements: Placement[][] = jobs.map(() => [])
+        // Pinned jobs first, so unpinned ones can't take the RAM they need.
+        const order = jobs
+          .map((_, i) => i)
+          .sort((a, b) => Number(!jobs[a].host) - Number(!jobs[b].host))
+
+        for (const i of order) {
+          const { host, ramPerThread, threads } = jobs[i]
+
+          placements[i] = place(
+            host ? hosts.filter((h) => h === host) : hosts,
+            ramPerThread,
+            threads,
+            held,
+          )
+        }
 
         if (jobs.some((job, i) => placed(placements[i]) < job.threads)) {
           return null

@@ -14,8 +14,11 @@ export interface ReserveParams {
 }
 
 export interface ReserveAllParams {
-  /** Each job may be split across hosts, but must fit in full. */
-  jobs: { ramPerThread: number; threads: number }[]
+  /**
+   * Each job may be split across hosts, but must fit in full. A job with a
+   * `host` is placed on that host only, and before the unpinned ones.
+   */
+  jobs: { ramPerThread: number; threads: number; host?: string }[]
   ttlMs?: number
 }
 

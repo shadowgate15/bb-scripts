@@ -9,6 +9,8 @@ export interface RunParams {
   /** Total threads wanted. The runner places as many as fit. */
   threads: number
   args: ScriptArg[]
+  /** Run only on this host (e.g. home, for its cores); omit to place anywhere. */
+  host?: string
 }
 
 /**
