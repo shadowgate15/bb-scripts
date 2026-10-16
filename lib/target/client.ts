@@ -11,3 +11,8 @@ export function rankTargets(limit?: number) {
 export function getBestTarget() {
   return client().call('best', undefined)
 }
+
+/** Why servers were left out of the ranking. */
+export function explainTargets() {
+  return client().call('explain', undefined)
+}

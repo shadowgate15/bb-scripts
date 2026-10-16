@@ -13,6 +13,15 @@ export interface TargetInfo {
   score: number
 }
 
+/** Why a ranking came back the way it did, for logs. */
+export interface TargetReport {
+  /** Servers we have root on. */
+  rooted: number
+  /** RAM available to run scripts across them, in GB. */
+  poolRam: number
+  rejected: { host: string; reason: string }[]
+}
+
 /**
  * Shared by the target client and server. Keep it free of client or server
  * code so importing it never drags either into the other's bundle.
@@ -20,6 +29,8 @@ export interface TargetInfo {
 export interface TargetRpc extends RpcSchema {
   /** Hackable servers, best first. */
   rank: { params: { limit?: number } | undefined; result: TargetInfo[] }
+  /** Why servers were left out of `rank`. */
+  explain: { params: undefined; result: TargetReport }
   /** The top-ranked server, or null if none is hackable yet. */
   best: { params: undefined; result: string | null }
 }

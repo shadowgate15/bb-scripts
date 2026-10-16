@@ -3,7 +3,7 @@ import { entry } from '@/lib/entry'
 import { planPrep } from '@/lib/prep'
 import type { RunParams } from '@/lib/runner/protocol'
 import { run, runAll } from '@/lib/runner/run'
-import { rankTargets } from '@/lib/target/client'
+import { explainTargets, rankTargets } from '@/lib/target/client'
 import type { TargetInfo } from '@/lib/target/protocol'
 
 /** A new target must score this many times the current one to replace it. */
@@ -29,6 +29,7 @@ export const main = entry(async (ns) => {
   let target: string | null = null
   let busyUntil = 0
   let batchId = 0
+  let lastReport = ''
 
   while (true) {
     // Mid-flight readings are meaningless, so only inspect when nothing's running.
@@ -36,7 +37,7 @@ export const main = entry(async (ns) => {
       const next = chooseTarget(await rankTargets(), target)
 
       if (next === null) {
-        ns.print('no hackable target yet')
+        lastReport = await reportNoTarget(ns, lastReport)
         await ns.sleep(IDLE_MS)
         continue
       }
@@ -82,6 +83,23 @@ export const main = entry(async (ns) => {
     await ns.sleep(SPACING_MS)
   }
 })
+
+/** Logs why nothing is hackable, unless it's the same as last time. */
+async function reportNoTarget(ns: NS, last: string): Promise<string> {
+  const { rooted, poolRam, rejected } = await explainTargets()
+  const lines = [
+    `no hackable target: ${rooted} rooted, ${poolRam.toFixed(1)}GB pool RAM`,
+    ...rejected.slice(0, 5).map((r) => `  ${r.host}: ${r.reason}`),
+  ]
+
+  if (rejected.length > 5) lines.push(`  ...and ${rejected.length - 5} more`)
+
+  const report = lines.join('\n')
+
+  if (report !== last) ns.print(report)
+
+  return report
+}
 
 /** Keeps `current` unless the best-ranked target beats it by SWITCH_RATIO. */
 function chooseTarget(

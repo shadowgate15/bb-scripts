@@ -5,6 +5,7 @@ import { serve } from '@/lib/port-rpc/server'
 import { rootAll } from '@/lib/rooter/root-all'
 import {
   type TargetInfo,
+  type TargetReport,
   type TargetRpc,
   targetChannel,
 } from '@/lib/target/protocol'
@@ -23,7 +24,10 @@ const SECURITY_PER_WEAKEN = 0.05
  * RAM we have, discounted by how long they still need to be prepped.
  */
 export const main = entry(async (ns) => {
-  const rank = async (): Promise<TargetInfo[]> => {
+  /** Scores every rooted server, noting why each rejected one was skipped. */
+  const evaluate = async (): Promise<
+    TargetReport & { targets: TargetInfo[] }
+  > => {
     const hosts = await rootAll()
     const poolRam = hosts.reduce(
       (sum, h) =>
@@ -31,29 +35,50 @@ export const main = entry(async (ns) => {
       0,
     )
     const targets: TargetInfo[] = []
+    const rejected: TargetReport['rejected'] = []
+    const reject = (host: string, reason: string) =>
+      rejected.push({ host, reason })
 
     for (const host of hosts) {
       const maxMoney = ns.getServerMaxMoney(host)
 
-      if (maxMoney <= 0) continue
-      if (
-        ns.getServerRequiredHackingLevel(host) >
-        ns.getHackingLevel() * LEVEL_SHARE
-      ) {
+      if (maxMoney <= 0) {
+        reject(host, 'has no money')
+        continue
+      }
+
+      const required = ns.getServerRequiredHackingLevel(host)
+      const limit = ns.getHackingLevel() * LEVEL_SHARE
+
+      if (required > limit) {
+        reject(
+          host,
+          `needs hacking ${required}, limit is ${limit} (${LEVEL_SHARE} x level ${ns.getHackingLevel()})`,
+        )
         continue
       }
 
       const sizes = sizeBatch(host)
 
-      if (sizes === null) continue
+      if (sizes === null) {
+        reject(host, 'a batch would hack under one thread')
+        continue
+      }
 
       const weakenMs = ns.getWeakenTime(host)
+      const ramPerBatch = batchRam(sizes)
       const inFlight = Math.min(
         Math.floor(weakenMs / SPACING_MS),
-        Math.floor(poolRam / batchRam(sizes)),
+        Math.floor(poolRam / ramPerBatch),
       )
 
-      if (inFlight < 1) continue
+      if (inFlight < 1) {
+        reject(
+          host,
+          `a batch needs ${ramPerBatch.toFixed(1)}GB, pool has ${poolRam.toFixed(1)}GB`,
+        )
+        continue
+      }
 
       const incomePerSec =
         (inFlight * HACK_FRACTION * maxMoney) / (weakenMs / 1000)
@@ -69,8 +94,12 @@ export const main = entry(async (ns) => {
       })
     }
 
-    return targets.sort((a, b) => b.score - a.score)
+    targets.sort((a, b) => b.score - a.score)
+
+    return { rooted: hosts.length, poolRam, rejected, targets }
   }
+
+  const rank = async () => (await evaluate()).targets
 
   /** Rounds of weaken+grow the pool needs, each taking one weaken time. */
   const estimatePrepMs = (
@@ -103,6 +132,11 @@ export const main = entry(async (ns) => {
     targetChannel,
     {
       rank: async (params) => (await rank()).slice(0, params?.limit),
+      explain: async () => {
+        const { targets: _, ...report } = await evaluate()
+
+        return report
+      },
       best: async () => (await rank())[0]?.host ?? null,
     },
     { onError: (e) => ns.print(`target: ${e}`) },
