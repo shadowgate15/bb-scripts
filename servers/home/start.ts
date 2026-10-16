@@ -16,7 +16,7 @@ const SERVICES = [
  */
 const HOME_UPGRADE_MAX_RAM = HOME_RESERVED_RAM / 2
 
-/** Starts every service, then the batcher and purchaser. Safe to re-run. */
+/** Starts every service, then the batcher, purchaser and status view. Safe to re-run. */
 export const main = entry(async (ns) => {
   const services = [...SERVICES]
 
@@ -32,7 +32,7 @@ export const main = entry(async (ns) => {
 
   await ns.sleep(500)
 
-  for (const script of ['batcher.js', 'purchaser.js']) {
+  for (const script of ['batcher.js', 'purchaser.js', 'status.js']) {
     if (!ns.isRunning(script, 'home')) {
       ns.run(script)
     }
