@@ -36,13 +36,39 @@ export interface BatchPlan {
   incomePerSec: number
 }
 
+/**
+ * How much more one hack steals (and how much likelier it is to succeed) at the
+ * target's minimum security than at its current one, both scale with
+ * (100 - security). 1 when the target is already prepped.
+ */
+function preppedBoost(target: string): number {
+  const ns = getNs()
+  const current = ns.getServerSecurityLevel(target)
+  const min = ns.getServerMinSecurityLevel(target)
+
+  return current >= 100 ? 1 : (100 - min) / (100 - current)
+}
+
+/** Weaken time once the target is at minimum security, in ms. */
+function weakenMsWhenPrepped(target: string): number {
+  const ns = getNs()
+  const required = ns.getServerRequiredHackingLevel(target)
+  const at = (security: number) => 2.5 * required * security + 500
+
+  return (
+    (ns.getWeakenTime(target) * at(ns.getServerMinSecurityLevel(target))) /
+    at(ns.getServerSecurityLevel(target))
+  )
+}
+
 /** Sizes a batch stealing `fraction` of max money, or null if that's under one hack thread. */
 export function sizeBatch(target: string, fraction: number): BatchSizes | null {
   const ns = getNs()
   // Sized from the share one thread steals, not `hackAnalyzeThreads`, which
   // returns -1 whenever the server holds less money than asked for (so for any
   // server that still needs growing).
-  const stolenPerThread = ns.hackAnalyze(target)
+  // Judged at minimum security, which is where a batch actually runs.
+  const stolenPerThread = ns.hackAnalyze(target) * preppedBoost(target)
   const hack = stolenPerThread > 0 ? Math.floor(fraction / stolenPerThread) : 0
 
   if (hack < 1) return null
@@ -76,8 +102,9 @@ export function batchRam(sizes: BatchSizes): number {
 
 /**
  * Picks the hack fraction that earns the most from `poolRam`, or says why none
- * works. Batches are sized at the target's current security, so call this for
- * a prepped target (or accept a slightly pessimistic answer for one that isn't).
+ * works. Hack yield, hack chance and weaken time are all taken at the target's
+ * minimum security, so an unprepped target isn't marked down for being unprepped
+ * (that cost is charged separately as prep time).
  */
 export function chooseBatch(
   target: string,
@@ -85,7 +112,11 @@ export function chooseBatch(
 ): BatchPlan | { reason: string } {
   const ns = getNs()
   const maxMoney = ns.getServerMaxMoney(target)
-  const weakenMs = ns.getWeakenTime(target)
+  const weakenMs = weakenMsWhenPrepped(target)
+  const hackChance = Math.min(
+    1,
+    ns.hackAnalyzeChance(target) * preppedBoost(target),
+  )
   const usableRam = poolRam * POOL_USE
   let best: BatchPlan | null = null
   let smallestRam = Number.POSITIVE_INFINITY
@@ -105,7 +136,9 @@ export function chooseBatch(
 
     if (inFlight < 1) continue
 
-    const incomePerSec = (inFlight * fraction * maxMoney) / (weakenMs / 1000)
+    // A failed hack steals nothing, but its grow and weaken still run.
+    const incomePerSec =
+      (inFlight * fraction * maxMoney * hackChance) / (weakenMs / 1000)
 
     if (best === null || incomePerSec > best.incomePerSec) {
       best = { fraction, sizes, ramPerBatch, inFlight, incomePerSec }
