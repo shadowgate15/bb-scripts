@@ -1,7 +1,7 @@
 import { type BatchSizes, GAP_MS, SPACING_MS } from '@/lib/batch'
 import { entry } from '@/lib/entry'
 import type { RunParams } from '@/lib/runner/protocol'
-import { run, runAll } from '@/lib/runner/run'
+import { killPids, run, runAll } from '@/lib/runner/run'
 import { BATCHER_STATUS_PORT, type BatcherStatus } from '@/lib/status/protocol'
 import {
   explainTargets,
@@ -172,7 +172,17 @@ export const main = entry(async (ns) => {
 
     const batch = planBatch(ns, info, batchId)
 
-    const { ok } = await runAll(batch.jobs)
+    const launch = await runAll(batch.jobs)
+    let { ok } = launch
+
+    if (ok && !landsInOrder(ns, info.host, batch)) {
+      // Durations moved under us (a level-up, or security off its floor), so
+      // the landings would be out of order and corrupt the target. Stop the
+      // whole batch before anything lands.
+      await killPids(launch.pids.flat())
+      ns.print(`${info.host}: batch ${batchId} drifted out of order; killed`)
+      ok = false
+    }
 
     if (ok) {
       batchId++
@@ -191,7 +201,7 @@ export const main = entry(async (ns) => {
       prepReadyAt: null,
       message: ok
         ? 'launching batches'
-        : 'pool full, waiting for batches to land',
+        : 'batch skipped, waiting for the next slot',
     })
 
     await ns.sleep(SPACING_MS)
@@ -236,6 +246,31 @@ interface Batch {
   sizes: BatchSizes
   /** From launch until the last job lands, in ms. */
   durationMs: number
+  /** Per job, in `jobs` order: the run time the plan assumed, and when it should land. */
+  planned: { runMs: number; landsAt: number }[]
+}
+
+/** A landing must trail the previous one by at least this much to stay in order. */
+const MIN_LANDING_GAP_MS = GAP_MS / 2
+
+/**
+ * Re-reads the run times after launch and checks the four landings still come
+ * hack, weaken, grow, weaken. Each job's delay was fixed from the plan, so a
+ * change in its run time moves its landing by the same amount.
+ */
+function landsInOrder(ns: NS, target: string, batch: Batch): boolean {
+  const weakenMs = ns.getWeakenTime(target)
+  const now = [
+    ns.getHackTime(target),
+    weakenMs,
+    ns.getGrowTime(target),
+    weakenMs,
+  ]
+  const landings = batch.planned.map((p, i) => p.landsAt + (now[i] - p.runMs))
+
+  return landings.every(
+    (t, i) => i === 0 || t - landings[i - 1] >= MIN_LANDING_GAP_MS,
+  )
 }
 
 /**
@@ -247,42 +282,45 @@ interface Batch {
 function planBatch(ns: NS, info: TargetInfo, id: number): Batch {
   const { host: target, sizes, homeCores } = info
   const weakenMs = ns.getWeakenTime(target)
+  const planned: Batch['planned'] = []
   const job = (
     script: string,
     threads: number,
     runMs: number,
     landsAt: number,
-  ): RunParams => ({
-    script,
-    threads,
-    args: [target, landsAt - runMs, id],
-    // Sized for home's cores, so only home gives them their full effect.
-    host: homeCores > 1 && script !== 'workers/hack.js' ? 'home' : undefined,
-  })
+  ): RunParams => {
+    planned.push({ runMs, landsAt })
 
-  return {
-    sizes,
-    jobs: [
-      job(
-        'workers/hack.js',
-        sizes.hack,
-        ns.getHackTime(target),
-        weakenMs - GAP_MS,
-      ),
-      job('workers/weaken.js', sizes.weakenAfterHack, weakenMs, weakenMs),
-      job(
-        'workers/grow.js',
-        sizes.grow,
-        ns.getGrowTime(target),
-        weakenMs + GAP_MS,
-      ),
-      job(
-        'workers/weaken.js',
-        sizes.weakenAfterGrow,
-        weakenMs,
-        weakenMs + 2 * GAP_MS,
-      ),
-    ],
-    durationMs: weakenMs + 2 * GAP_MS,
+    return {
+      script,
+      threads,
+      args: [target, landsAt - runMs, id],
+      // Sized for home's cores, so only home gives them their full effect.
+      host: homeCores > 1 && script !== 'workers/hack.js' ? 'home' : undefined,
+    }
   }
+
+  const jobs = [
+    job(
+      'workers/hack.js',
+      sizes.hack,
+      ns.getHackTime(target),
+      weakenMs - GAP_MS,
+    ),
+    job('workers/weaken.js', sizes.weakenAfterHack, weakenMs, weakenMs),
+    job(
+      'workers/grow.js',
+      sizes.grow,
+      ns.getGrowTime(target),
+      weakenMs + GAP_MS,
+    ),
+    job(
+      'workers/weaken.js',
+      sizes.weakenAfterGrow,
+      weakenMs,
+      weakenMs + 2 * GAP_MS,
+    ),
+  ]
+
+  return { sizes, jobs, planned, durationMs: weakenMs + 2 * GAP_MS }
 }

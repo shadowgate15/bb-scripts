@@ -57,6 +57,8 @@ export const main = entry(async (ns) => {
         }
       },
 
+      kill: ({ pids }) => pids.filter((pid) => ns.kill(pid)).length,
+
       run: async ({ script, threads, args }) => {
         const ramPerThread = ns.getScriptRam(script, 'home')
         const { id, placements } = await reserveRam({ ramPerThread, threads })

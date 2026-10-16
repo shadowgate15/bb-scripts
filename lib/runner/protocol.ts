@@ -27,6 +27,8 @@ export interface RunnerRpc extends RpcSchema {
     params: { jobs: RunParams[] }
     result: { ok: boolean; pids: number[][] }
   }
+  /** Kills the given processes; returns how many were running. */
+  kill: { params: { pids: number[] }; result: number }
   run: { params: RunParams; result: { launched: number; pids: number[] } }
 }
 
