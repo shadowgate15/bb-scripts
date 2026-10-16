@@ -1,11 +1,10 @@
+import { HOME_RESERVED_RAM } from '@/lib/constants/ram'
 import { entry } from '@/lib/entry'
 import { serve } from '@/lib/port-rpc/server'
 import type { HostRam, Placement, RamPoolRpc } from '@/lib/ram-pool/protocol'
 import { ramPoolChannel } from '@/lib/ram-pool/protocol'
 import { rootAll } from '@/lib/rooter/root-all'
 
-/** RAM kept free on home for the services themselves. */
-const HOME_RESERVED_RAM = 32
 const DEFAULT_TTL_MS = 10_000
 
 interface Reservation {

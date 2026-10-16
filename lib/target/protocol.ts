@@ -5,7 +5,11 @@ export interface TargetInfo {
   host: string
   maxMoney: number
   minSecurity: number
-  /** Ranking value: max money per ms of weaken time. */
+  /** Estimated time to get it to min security and max money with our RAM. */
+  prepMs: number
+  /** Steady-state batching income with our RAM, per second. */
+  incomePerSec: number
+  /** Ranking value: income per second discounted by the prep it needs first. */
   score: number
 }
 
