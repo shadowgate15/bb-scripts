@@ -3,7 +3,7 @@ import { HOME_RESERVED_RAM } from '@/lib/constants/ram'
 import { entry } from '@/lib/entry'
 import { rootAll } from '@/lib/network/client'
 import { serve } from '@/lib/port-rpc/server'
-import { planPrep } from '@/lib/prep'
+import { type PrepRam, planPrep, prepRounds } from '@/lib/prep'
 import {
   type TargetInfo,
   type TargetReport,
@@ -18,7 +18,6 @@ const LEVEL_SHARE = 0.5
  * scores near zero, one that is already prepped keeps its full income.
  */
 const HORIZON_S = 900
-const SECURITY_PER_WEAKEN = 0.05
 
 /**
  * Ranks rooted servers by what they would earn us: batching income given the
@@ -30,11 +29,8 @@ export const main = entry(async (ns) => {
     TargetReport & { targets: TargetInfo[] }
   > => {
     const hosts = await rootAll()
-    const poolRam = hosts.reduce(
-      (sum, h) =>
-        sum + ns.getServerMaxRam(h) - (h === 'home' ? HOME_RESERVED_RAM : 0),
-      0,
-    )
+    const ram = prepRamFor(hosts)
+    const poolRam = ram.pool
     const targets: TargetInfo[] = []
     const rejected: TargetReport['rejected'] = []
     const reject = (host: string, reason: string) =>
@@ -68,7 +64,7 @@ export const main = entry(async (ns) => {
 
       const weakenMs = ns.getWeakenTime(host)
       const { incomePerSec } = plan
-      const prepMs = estimatePrepMs(host, poolRam, weakenMs)
+      const prepMs = prepRounds(host, ram) * weakenMs
 
       targets.push({
         host,
@@ -89,34 +85,18 @@ export const main = entry(async (ns) => {
     return { rooted: hosts.length, poolRam, rejected, targets }
   }
 
-  const rank = async () => (await evaluate()).targets
+  /** RAM across `hosts` for scripts, and home's share of it. */
+  const prepRamFor = (hosts: string[]): PrepRam => {
+    const usable = (h: string) =>
+      ns.getServerMaxRam(h) - (h === 'home' ? HOME_RESERVED_RAM : 0)
 
-  /** Rounds of weaken+grow the pool needs, each taking one weaken time. */
-  const estimatePrepMs = (
-    host: string,
-    poolRam: number,
-    weakenMs: number,
-  ): number => {
-    const money = ns.getServerMoneyAvailable(host)
-    const maxMoney = ns.getServerMaxMoney(host)
-    const grow =
-      money < maxMoney
-        ? Math.ceil(ns.growthAnalyze(host, maxMoney / Math.max(money, 1)))
-        : 0
-    const excess =
-      ns.getServerSecurityLevel(host) -
-      ns.getServerMinSecurityLevel(host) +
-      (grow > 0 ? ns.growthAnalyzeSecurity(grow, host) : 0)
-    const weaken = Math.ceil(excess / SECURITY_PER_WEAKEN)
-
-    if (grow + weaken <= 0) return 0
-
-    const ram =
-      grow * ns.getScriptRam('workers/grow.js', 'home') +
-      weaken * ns.getScriptRam('workers/weaken.js', 'home')
-
-    return Math.max(1, Math.ceil(ram / poolRam)) * weakenMs
+    return {
+      pool: hosts.reduce((sum, h) => sum + usable(h), 0),
+      home: usable('home'),
+    }
   }
+
+  const rank = async () => (await evaluate()).targets
 
   await serve<TargetRpc>(
     targetChannel,
@@ -127,8 +107,8 @@ export const main = entry(async (ns) => {
 
         return report
       },
-      prep: ({ host, securitySlack, moneyFloor }) =>
-        planPrep(host, securitySlack, moneyFloor),
+      prep: async ({ host, securitySlack, moneyFloor }) =>
+        planPrep(host, securitySlack, moneyFloor, prepRamFor(await rootAll())),
       best: async () => (await rank())[0]?.host ?? null,
     },
     { onError: (e) => ns.print(`target: ${e}`) },
