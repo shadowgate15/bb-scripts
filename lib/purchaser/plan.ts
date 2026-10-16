@@ -53,6 +53,22 @@ function largestAffordable(
 }
 
 /**
+ * True when there is nothing left to buy: every cloud slot is filled with a
+ * server at the RAM limit, and home RAM is unavailable or maxed out.
+ *
+ * A maxed home upgrade is assumed to quote an infinite cost; an unavailable one
+ * (no home-upgrade service) counts as nothing to buy.
+ */
+export function isDone(state: PurchaseState): boolean {
+  const cloudMaxed =
+    state.servers.length >= state.serverLimit &&
+    state.servers.every((s) => s.ram >= state.ramLimit)
+  const homeMaxed = state.home === null || !Number.isFinite(state.home.ramCost)
+
+  return cloudMaxed && homeMaxed
+}
+
+/**
  * The single best purchase to make next, or null if nothing fits the budget.
  *
  * Cloud: fill every slot first, then double the smallest server as far as the

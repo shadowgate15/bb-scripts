@@ -1,6 +1,7 @@
 import { entry } from '@/lib/entry'
 import { quoteHomeUpgrade, upgradeHomeRam } from '@/lib/home-upgrade/client'
 import {
+  isDone,
   nextPurchase,
   type Purchase,
   type PurchaseState,
@@ -20,11 +21,22 @@ export const main = entry(async (ns) => {
   ns.disableLog('sleep')
 
   while (true) {
+    let state = await readState(ns)
+
     // Several purchases per tick when cash allows; each re-reads fresh state.
     while (true) {
-      const purchase = nextPurchase(await readState(ns))
+      const purchase = nextPurchase(state)
 
       if (purchase === null || !(await execute(ns, purchase))) break
+
+      state = await readState(ns)
+    }
+
+    // Free our RAM once there's nothing left to buy.
+    if (isDone(state)) {
+      ns.print('everything is purchased; exiting')
+
+      return
     }
 
     await ns.sleep(TICK_MS)
