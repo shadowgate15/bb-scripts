@@ -1,9 +1,9 @@
 import { HOME_RESERVED_RAM } from '@/lib/constants/ram'
 import { entry } from '@/lib/entry'
+import { rootAll } from '@/lib/network/client'
 import { serve } from '@/lib/port-rpc/server'
 import type { HostRam, Placement, RamPoolRpc } from '@/lib/ram-pool/protocol'
 import { ramPoolChannel } from '@/lib/ram-pool/protocol'
-import { rootAll } from '@/lib/rooter/root-all'
 
 const DEFAULT_TTL_MS = 10_000
 

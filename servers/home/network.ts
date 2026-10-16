@@ -1,16 +1,15 @@
 import { entry } from '@/lib/entry'
+import { type NetworkRpc, networkChannel } from '@/lib/network/protocol'
 import { serve } from '@/lib/port-rpc/server'
-import { type RooterRpc, rooterChannel } from '@/lib/rooter/protocol'
-import { getServerList } from '@/lib/server-list/get-server-list'
 
 /**
  * How long a `rootAll` result is reused. Rooting only changes when your hacking
  * level, programs or network do, so a few seconds of staleness costs little and
- * saves a server-list round trip plus a scan on every call.
+ * saves a scan plus a pass over every server on each call.
  */
 const CACHE_TTL_MS = 5_000
 
-/** Opens ports and nukes every server it can, on request. */
+/** Knows the network: lists every server, and opens ports and nukes what it can. */
 export const main = entry(async (ns) => {
   let cached: { servers: string[]; expires: number } | null = null
   let refresh: Promise<string[]> | null = null
@@ -18,7 +17,7 @@ export const main = entry(async (ns) => {
   const rootEverything = async () => {
     const rooted: string[] = []
 
-    for (const server of await getServerList()) {
+    for (const server of scanNetwork(ns)) {
       if (tryRoot(ns, server)) {
         rooted.push(server)
       }
@@ -27,9 +26,11 @@ export const main = entry(async (ns) => {
     return rooted
   }
 
-  await serve<RooterRpc>(
-    rooterChannel,
+  await serve<NetworkRpc>(
+    networkChannel,
     {
+      getServers: () => scanNetwork(ns),
+
       rootAll: async () => {
         if (cached !== null && cached.expires > Date.now()) {
           return cached.servers
@@ -49,7 +50,7 @@ export const main = entry(async (ns) => {
         return refresh
       },
     },
-    { onError: (e) => ns.print(`rooter: ${e}`) },
+    { onError: (e) => ns.print(`network: ${e}`) },
   )
 })
 
@@ -85,4 +86,21 @@ function tryRoot(ns: NS, host: string): boolean {
   ns.nuke(host)
 
   return ns.hasRootAccess(host)
+}
+
+/** Breadth-first walk of the network starting at home. */
+function scanNetwork(ns: NS): string[] {
+  const servers = ['home']
+  const seen = new Set(servers)
+
+  for (const server of servers) {
+    for (const neighbor of ns.scan(server)) {
+      if (!seen.has(neighbor)) {
+        seen.add(neighbor)
+        servers.push(neighbor)
+      }
+    }
+  }
+
+  return servers
 }

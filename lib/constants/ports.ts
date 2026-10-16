@@ -4,8 +4,9 @@
  * Append new members; don't reorder, or running servers and clients disagree.
  */
 export enum PORTS {
+  /** Retired: its scan moved into NETWORK. Kept so later ids don't shift. */
   SERVER_LIST,
-  ROOTER,
+  NETWORK,
   RUNNER,
   RAM_POOL,
   TARGET,

@@ -1,5 +1,5 @@
 import { entry } from '@/lib/entry'
-import { rootAll } from '@/lib/rooter/root-all'
+import { rootAll } from '@/lib/network/client'
 import {
   BATCHER_STATUS_PORT,
   type BatcherPhase,
@@ -288,7 +288,7 @@ function Dashboard({
             {ramBar(`${pool.others.hosts} servers`, pool.others, fmt)}
           </>
         ) : (
-          <Dim>rooter not responding</Dim>
+          <Dim>network service not responding</Dim>
         )}
       </Panel>
 

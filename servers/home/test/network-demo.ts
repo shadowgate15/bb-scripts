@@ -1,12 +1,12 @@
 import { entry } from '@/lib/entry'
-import { getServerList } from '@/lib/server-list/get-server-list'
+import { getServers } from '@/lib/network/client'
 
-// Run `run server-list.js` first, then `run test/server-list-demo.js`.
+// Run `run network.js` first, then `run test/network-demo.js`.
 export const main = entry(async (ns) => {
   ns.ui.openTail()
 
   const start = Date.now()
-  const servers = await getServerList()
+  const servers = await getServers()
 
   ns.print(`${servers.length} servers in ${Date.now() - start}ms`)
 

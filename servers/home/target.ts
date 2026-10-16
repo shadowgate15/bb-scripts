@@ -1,8 +1,8 @@
 import { chooseBatch } from '@/lib/batch'
 import { HOME_RESERVED_RAM } from '@/lib/constants/ram'
 import { entry } from '@/lib/entry'
+import { rootAll } from '@/lib/network/client'
 import { serve } from '@/lib/port-rpc/server'
-import { rootAll } from '@/lib/rooter/root-all'
 import {
   type TargetInfo,
   type TargetReport,

@@ -1,13 +1,7 @@
 import { HOME_RESERVED_RAM } from '@/lib/constants/ram'
 import { entry } from '@/lib/entry'
 
-const SERVICES = [
-  'server-list.js',
-  'rooter.js',
-  'ram-pool.js',
-  'runner.js',
-  'target.js',
-]
+const SERVICES = ['network.js', 'ram-pool.js', 'runner.js', 'target.js']
 
 /**
  * Singularity calls cost 16x/4x/1x their base RAM by Source-File 4 level, so
