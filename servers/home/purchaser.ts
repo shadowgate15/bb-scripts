@@ -1,5 +1,6 @@
 import { entry } from '@/lib/entry'
 import { buyHomeRam, quoteHomeUpgrade } from '@/lib/home-upgrade/client'
+import { getServers } from '@/lib/network/client'
 import {
   isDone,
   nextPurchase,
@@ -11,6 +12,11 @@ const CLOUD_PREFIX = 'cloud-'
 /** Share of current cash a single purchase may use. */
 const SPEND_FRACTION = 0.5
 const TICK_MS = 10_000
+
+/** Our purchased servers, from the network service's scan. */
+async function cloudServers(): Promise<string[]> {
+  return (await getServers()).filter((host) => host.startsWith(CLOUD_PREFIX))
+}
 
 /**
  * Spends money on RAM: cloud servers first (fill the slots, then upgrade the
@@ -49,10 +55,11 @@ async function readState(ns: NS): Promise<PurchaseState> {
     : null
 
   return {
-    budget: ns.getPlayer().money * SPEND_FRACTION,
-    servers: ns.cloud
-      .getServerNames()
-      .map((host) => ({ host, ram: ns.getServerMaxRam(host) })),
+    budget: ns.getServerMoneyAvailable('home') * SPEND_FRACTION,
+    servers: (await cloudServers()).map((host) => ({
+      host,
+      ram: ns.getServerMaxRam(host),
+    })),
     serverLimit: ns.cloud.getServerLimit(),
     ramLimit: ns.cloud.getRamLimit(),
     cloudCost: (ram) => ns.cloud.getServerCost(ram),
@@ -65,7 +72,10 @@ async function readState(ns: NS): Promise<PurchaseState> {
 async function execute(ns: NS, purchase: Purchase): Promise<boolean> {
   switch (purchase.kind) {
     case 'buy': {
-      const host = ns.cloud.purchaseServer(freeName(ns), purchase.ram)
+      const host = ns.cloud.purchaseServer(
+        freeName(await cloudServers()),
+        purchase.ram,
+      )
 
       ns.print(
         host === ''
@@ -95,8 +105,8 @@ async function execute(ns: NS, purchase: Purchase): Promise<boolean> {
 }
 
 /** First `cloud-N` name not already taken. */
-function freeName(ns: NS): string {
-  const taken = new Set(ns.cloud.getServerNames())
+function freeName(names: string[]): string {
+  const taken = new Set(names)
 
   for (let n = 0; ; n++) {
     if (!taken.has(`${CLOUD_PREFIX}${n}`)) return `${CLOUD_PREFIX}${n}`

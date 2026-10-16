@@ -1,10 +1,13 @@
-import { GAP_MS, SPACING_MS, sizeBatch } from '@/lib/batch'
+import { type BatchSizes, GAP_MS, SPACING_MS } from '@/lib/batch'
 import { entry } from '@/lib/entry'
-import { planPrep } from '@/lib/prep'
 import type { RunParams } from '@/lib/runner/protocol'
 import { run, runAll } from '@/lib/runner/run'
 import { BATCHER_STATUS_PORT, type BatcherStatus } from '@/lib/status/protocol'
-import { explainTargets, rankTargets } from '@/lib/target/client'
+import {
+  explainTargets,
+  planTargetPrep,
+  rankTargets,
+} from '@/lib/target/client'
 import type { TargetInfo } from '@/lib/target/protocol'
 
 /** A new target must score this many times the current one to replace it. */
@@ -102,7 +105,7 @@ export const main = entry(async (ns) => {
 
       info = next
 
-      const prep = planPrep(info.host, SECURITY_SLACK, MONEY_FLOOR)
+      const prep = await planTargetPrep(info.host, SECURITY_SLACK, MONEY_FLOOR)
 
       if (prep !== null) {
         // All at once when it fits; otherwise one step at a time.
@@ -167,23 +170,7 @@ export const main = entry(async (ns) => {
       continue
     }
 
-    const batch = planBatch(
-      ns,
-      info.host,
-      batchId,
-      info.fraction,
-      info.homeCores,
-    )
-
-    if (batch === null) {
-      ns.print(`${info.host}: too little money to batch`)
-      publish({
-        phase: 'searching',
-        message: `${info.host}: too small to batch`,
-      })
-      await ns.sleep(IDLE_MS)
-      continue
-    }
+    const batch = planBatch(ns, info, batchId)
 
     const { ok } = await runAll(batch.jobs)
 
@@ -246,28 +233,19 @@ function chooseTarget(
 
 interface Batch {
   jobs: RunParams[]
-  sizes: NonNullable<ReturnType<typeof sizeBatch>>
+  sizes: BatchSizes
   /** From launch until the last job lands, in ms. */
   durationMs: number
 }
 
 /**
- * Lays out one hack/weaken/grow/weaken batch stealing `fraction` of max money.
+ * Lays out one hack/weaken/grow/weaken batch, sized by the target service.
  * Landing order, relative to the weaken time W: hack at W-gap, weaken at W,
  * grow at W+gap, weaken at W+2gap. Each job starts later by (landing time -
  * its own run time).
  */
-function planBatch(
-  ns: NS,
-  target: string,
-  id: number,
-  fraction: number,
-  homeCores: number,
-): Batch | null {
-  const sizes = sizeBatch(target, fraction, homeCores)
-
-  if (sizes === null) return null
-
+function planBatch(ns: NS, info: TargetInfo, id: number): Batch {
+  const { host: target, sizes, homeCores } = info
   const weakenMs = ns.getWeakenTime(target)
   const job = (
     script: string,

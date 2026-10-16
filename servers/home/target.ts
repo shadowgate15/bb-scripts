@@ -3,6 +3,7 @@ import { HOME_RESERVED_RAM } from '@/lib/constants/ram'
 import { entry } from '@/lib/entry'
 import { rootAll } from '@/lib/network/client'
 import { serve } from '@/lib/port-rpc/server'
+import { planPrep } from '@/lib/prep'
 import {
   type TargetInfo,
   type TargetReport,
@@ -77,6 +78,7 @@ export const main = entry(async (ns) => {
         incomePerSec,
         fraction: plan.fraction,
         homeCores: plan.homeCores,
+        sizes: plan.sizes,
         inFlight: plan.inFlight,
         score: (incomePerSec * HORIZON_S) / (HORIZON_S + prepMs / 1000),
       })
@@ -125,6 +127,8 @@ export const main = entry(async (ns) => {
 
         return report
       },
+      prep: ({ host, securitySlack, moneyFloor }) =>
+        planPrep(host, securitySlack, moneyFloor),
       best: async () => (await rank())[0]?.host ?? null,
     },
     { onError: (e) => ns.print(`target: ${e}`) },

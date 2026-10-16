@@ -12,6 +12,15 @@ export function getBestTarget() {
   return client().call('best', undefined)
 }
 
+/** Prep jobs for `host`, or null if it is already prepped. */
+export function planTargetPrep(
+  host: string,
+  securitySlack: number,
+  moneyFloor: number,
+) {
+  return client().call('prep', { host, securitySlack, moneyFloor })
+}
+
 /** Why servers were left out of the ranking. */
 export function explainTargets() {
   return client().call('explain', undefined)

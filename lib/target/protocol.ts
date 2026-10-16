@@ -1,5 +1,7 @@
+import type { BatchSizes } from '../batch'
 import { PORTS } from '../constants/ports'
 import { defineChannel, type RpcSchema } from '../port-rpc'
+import type { PrepPlan } from '../prep'
 
 export interface TargetInfo {
   host: string
@@ -11,6 +13,8 @@ export interface TargetInfo {
   incomePerSec: number
   /** Share of max money each batch steals at the best income for our RAM. */
   fraction: number
+  /** Thread counts of one batch at that fraction, so callers needn't size it. */
+  sizes: BatchSizes
   /** Cores grow and weaken are sized for; above 1 they must run on home. */
   homeCores: number
   /** Batches that fit in flight at that fraction. */
@@ -37,6 +41,14 @@ export interface TargetRpc extends RpcSchema {
   rank: { params: { limit?: number } | undefined; result: TargetInfo[] }
   /** Why servers were left out of `rank`. */
   explain: { params: undefined; result: TargetReport }
+  /**
+   * What it takes to get a server to min security and max money, or null once
+   * it is within `securitySlack` and `moneyFloor`. Computed fresh each call.
+   */
+  prep: {
+    params: { host: string; securitySlack: number; moneyFloor: number }
+    result: PrepPlan | null
+  }
   /** The top-ranked server, or null if none is hackable yet. */
   best: { params: undefined; result: string | null }
 }
