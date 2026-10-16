@@ -10,3 +10,7 @@ export function quoteHomeUpgrade() {
 export function buyHomeRam() {
   return client().call('buyRam', undefined)
 }
+
+export function buyHomeCores() {
+  return client().call('buyCores', undefined)
+}

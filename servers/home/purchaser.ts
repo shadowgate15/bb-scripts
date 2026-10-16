@@ -1,5 +1,9 @@
 import { entry } from '@/lib/entry'
-import { buyHomeRam, quoteHomeUpgrade } from '@/lib/home-upgrade/client'
+import {
+  buyHomeCores,
+  buyHomeRam,
+  quoteHomeUpgrade,
+} from '@/lib/home-upgrade/client'
 import { getServers } from '@/lib/network/client'
 import {
   isDone,
@@ -91,6 +95,13 @@ async function execute(ns: NS, purchase: Purchase): Promise<boolean> {
       ns.print(
         `${ok ? 'upgraded' : 'failed to upgrade'} ${purchase.host} to ${ns.format.ram(purchase.ram)}`,
       )
+
+      return ok
+    }
+    case 'cores': {
+      const ok = await buyHomeCores()
+
+      ns.print(`home core upgrade ${ok ? 'bought' : 'failed'}`)
 
       return ok
     }
