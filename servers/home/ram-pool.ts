@@ -41,41 +41,74 @@ export const main = entry(async (ns) => {
     reserved -
     (host === 'home' ? HOME_RESERVED_RAM : 0)
 
+  /** Fits `threads` onto hosts, counting RAM already `held` by this request. */
+  const place = (
+    hosts: string[],
+    ramPerThread: number,
+    threads: number,
+    held: Map<string, number>,
+  ): Placement[] => {
+    const placements: Placement[] = []
+    let remaining = threads
+
+    for (const host of hosts) {
+      if (remaining <= 0) break
+
+      const fit = Math.min(
+        remaining,
+        Math.floor(
+          freeOn(host, reservedOn(host) + (held.get(host) ?? 0)) / ramPerThread,
+        ),
+      )
+
+      if (fit < 1) continue
+
+      placements.push({ host, threads: fit })
+      held.set(host, (held.get(host) ?? 0) + fit * ramPerThread)
+      remaining -= fit
+    }
+
+    return placements
+  }
+
+  const hold = (held: Map<string, number>, ttlMs: number) => {
+    const id = crypto.randomUUID()
+
+    reservations.set(id, {
+      placements: [...held].map(([host, ram]) => ({ host, ram })),
+      expires: Date.now() + ttlMs,
+    })
+
+    return id
+  }
+
+  const placed = (placements: Placement[]) =>
+    placements.reduce((sum, p) => sum + p.threads, 0)
+
   await serve<RamPoolRpc>(
     ramPoolChannel,
     {
+      // No await after `rootAll`: reading usage and recording the hold is atomic.
       reserve: async ({ ramPerThread, threads, ttlMs = DEFAULT_TTL_MS }) => {
         const hosts = await rootAll()
+        const held = new Map<string, number>()
+        const placements = place(hosts, ramPerThread, threads, held)
 
-        // No await below: reading usage and recording the reservation is atomic.
-        const placements: Placement[] = []
-        let remaining = threads
+        return { id: hold(held, ttlMs), placements }
+      },
 
-        for (const host of hosts) {
-          if (remaining <= 0) break
+      reserveAll: async ({ jobs, ttlMs = DEFAULT_TTL_MS }) => {
+        const hosts = await rootAll()
+        const held = new Map<string, number>()
+        const placements = jobs.map((job) =>
+          place(hosts, job.ramPerThread, job.threads, held),
+        )
 
-          const fit = Math.min(
-            remaining,
-            Math.floor(freeOn(host, reservedOn(host)) / ramPerThread),
-          )
-
-          if (fit < 1) continue
-
-          placements.push({ host, threads: fit })
-          remaining -= fit
+        if (jobs.some((job, i) => placed(placements[i]) < job.threads)) {
+          return null
         }
 
-        const id = crypto.randomUUID()
-
-        reservations.set(id, {
-          placements: placements.map((p) => ({
-            host: p.host,
-            ram: p.threads * ramPerThread,
-          })),
-          expires: Date.now() + ttlMs,
-        })
-
-        return { id, placements }
+        return { id: hold(held, ttlMs), placements }
       },
 
       release: ({ id }) => reservations.delete(id),

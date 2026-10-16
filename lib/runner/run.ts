@@ -5,3 +5,8 @@ import { type RunnerRpc, type RunParams, runnerChannel } from './protocol'
 export function run(params: RunParams) {
   return createClient<RunnerRpc>(runnerChannel).call('run', params)
 }
+
+/** Starts every job in full, or none; `ok` is false if RAM didn't allow it. */
+export function runAll(jobs: RunParams[]) {
+  return createClient<RunnerRpc>(runnerChannel).call('runAll', { jobs })
+}

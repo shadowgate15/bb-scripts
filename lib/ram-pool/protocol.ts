@@ -13,6 +13,12 @@ export interface ReserveParams {
   ttlMs?: number
 }
 
+export interface ReserveAllParams {
+  /** Each job may be split across hosts, but must fit in full. */
+  jobs: { ramPerThread: number; threads: number }[]
+  ttlMs?: number
+}
+
 export interface HostRam {
   host: string
   free: number
@@ -31,6 +37,14 @@ export interface RamPoolRpc extends RpcSchema {
   reserve: {
     params: ReserveParams
     result: { id: string; placements: Placement[] }
+  }
+  /**
+   * All-or-nothing `reserve` for several jobs at once: returns one placement
+   * list per job, or null (holding nothing) if they don't all fit.
+   */
+  reserveAll: {
+    params: ReserveAllParams
+    result: { id: string; placements: Placement[][] } | null
   }
   release: { params: { id: string }; result: boolean }
   /** Free (net of reservations) and reserved RAM per rooted host. */

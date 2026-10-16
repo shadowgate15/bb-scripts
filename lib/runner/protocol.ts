@@ -17,6 +17,14 @@ export interface RunParams {
  */
 export interface RunnerRpc extends RpcSchema {
   /** Spreads `script` across rooted servers' free RAM. May place fewer than asked. */
+  /**
+   * All-or-nothing: starts every job in full, or none of them. Lets a caller
+   * with timing-sensitive work (a batch) avoid launching half of it.
+   */
+  runAll: {
+    params: { jobs: RunParams[] }
+    result: { ok: boolean; pids: number[][] }
+  }
   run: { params: RunParams; result: { launched: number; pids: number[] } }
 }
 
