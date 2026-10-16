@@ -7,4 +7,5 @@ export enum PORTS {
   SERVER_LIST,
   ROOTER,
   RUNNER,
+  RAM_POOL,
 }
