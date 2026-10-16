@@ -13,6 +13,8 @@ export type BatcherPhase =
   | 'prepping'
   /** Launching batches. */
   | 'batching'
+  /** A better target exists: letting in-flight batches land before switching. */
+  | 'retargeting'
   /** Pool is full: waiting for batches to land and free RAM. */
   | 'waiting'
 

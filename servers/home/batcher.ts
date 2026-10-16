@@ -15,13 +15,21 @@ const MONEY_FLOOR = 0.98
 /** Extra wait past a script's finish time, in ms. */
 const FINISH_BUFFER_MS = 200
 const IDLE_MS = 5_000
+/**
+ * While batching, how often to look for a better target. Switching costs a
+ * drain (about one weaken time with no income), so it only happens when the
+ * candidate clears SWITCH_RATIO; looking is cheap.
+ */
+const RECHECK_MS = 60_000
 
 /**
  * Prepares a target, then launches overlapping hack/weaken/grow/weaken batches
  * that land in that order, each GAP_MS apart. The target is sticky: it only
  * changes while nothing is in flight, and only for one that scores clearly
- * better. Whenever nothing is in flight the target is re-checked too, so drift
- * gets corrected instead of compounding. Publishes its state on
+ * better. While batching it re-ranks every RECHECK_MS; if a candidate clears
+ * the bar it stops launching, lets the in-flight batches land, then switches.
+ * Whenever nothing is in flight the target is re-checked too, so drift gets
+ * corrected instead of compounding. Publishes its state on
  * BATCHER_STATUS_PORT for the status view.
  */
 export const main = entry(async (ns) => {
@@ -32,6 +40,8 @@ export const main = entry(async (ns) => {
   let busyUntil = 0
   let batchId = 0
   let lastReport = ''
+  let lastRecheck = 0
+  let draining: string | null = null
   /** When each in-flight batch lands. */
   let landings: number[] = []
 
@@ -67,6 +77,9 @@ export const main = entry(async (ns) => {
   while (true) {
     // Mid-flight readings are meaningless, so only inspect when nothing's running.
     if (Date.now() >= busyUntil) {
+      draining = null
+      lastRecheck = Date.now()
+
       const ranked = await rankTargets()
       const next = chooseTarget(ranked, info?.host ?? null)
 
@@ -114,6 +127,30 @@ export const main = entry(async (ns) => {
     }
 
     if (info === null) continue
+
+    // Batching steadily never goes idle, so look for a better target on a timer.
+    if (draining === null && Date.now() - lastRecheck >= RECHECK_MS) {
+      lastRecheck = Date.now()
+
+      const better = chooseTarget(await rankTargets(), info.host)
+
+      if (better !== null && better.host !== info.host) {
+        draining = better.host
+        ns.print(`switching ${info.host} -> ${draining}: draining batches`)
+      } else if (better !== null) {
+        // Same target; take its refreshed batch fraction for the current pool.
+        info = better
+      }
+    }
+
+    if (draining !== null) {
+      publish({
+        phase: 'retargeting',
+        message: `draining ${status.inFlight} batches, then switching to ${draining}`,
+      })
+      await ns.sleep(SPACING_MS)
+      continue
+    }
 
     const batch = planBatch(ns, info.host, batchId, info.fraction)
 

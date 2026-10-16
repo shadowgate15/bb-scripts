@@ -120,6 +120,7 @@ const PHASE: Record<BatcherPhase, { label: string; color: string }> = {
   prepping: { label: 'PREPPING', color: c.cyan },
   batching: { label: 'BATCHING', color: c.green },
   waiting: { label: 'POOL FULL', color: c.teal },
+  retargeting: { label: 'SWITCHING', color: c.magenta },
 }
 
 const clamp01 = (n: number) =>
