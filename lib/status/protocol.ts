@@ -32,6 +32,9 @@ export interface BatcherStatus {
   estIncomePerSec: number
   batchesLaunched: number
   inFlight: number
+  /** Epoch ms the soonest and the latest in-flight batch land; null if none. */
+  nextLandingAt: number | null
+  lastLandingAt: number | null
   /** Threads in the prep step now running, while prepping. */
   prepThreads: { weaken: number; grow: number } | null
   /** Epoch ms the current prep step finishes, while prepping. */

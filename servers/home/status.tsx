@@ -247,6 +247,15 @@ function Dashboard({
         <Panel
           title={`batch · ${fmt.percent(status.fraction, 0)} of max money`}
         >
+          {typeof status.nextLandingAt === 'number' &&
+            typeof status.lastLandingAt === 'number' && (
+              <Dim>
+                next batch lands in{' '}
+                {fmt.time(Math.max(0, status.nextLandingAt - Date.now()))} ·
+                last in{' '}
+                {fmt.time(Math.max(0, status.lastLandingAt - Date.now()))}
+              </Dim>
+            )}
           <Dim>
             {status.homeCores !== null && status.homeCores > 1
               ? `grow + weaken pinned to home (${status.homeCores} cores) · hack on any server`

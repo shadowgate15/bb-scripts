@@ -58,6 +58,8 @@ export const main = entry(async (ns) => {
     estIncomePerSec: 0,
     batchesLaunched: 0,
     inFlight: 0,
+    nextLandingAt: null,
+    lastLandingAt: null,
     prepThreads: null,
     prepReadyAt: null,
     message: 'starting',
@@ -71,6 +73,8 @@ export const main = entry(async (ns) => {
       updatedAt: now,
       batchesLaunched: batchId,
       inFlight: landings.length,
+      nextLandingAt: landings.length > 0 ? Math.min(...landings) : null,
+      lastLandingAt: landings.length > 0 ? Math.max(...landings) : null,
     })
 
     const port = ns.getPortHandle(BATCHER_STATUS_PORT)
