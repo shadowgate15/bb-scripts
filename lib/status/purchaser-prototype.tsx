@@ -1,9 +1,8 @@
 /**
- * PROTOTYPE — throwaway. Three variants of a "purchaser progress" section for
- * servers/home/status.tsx, switchable with the floating bar (or ←/→).
- * Data is STUBBED (simulated from income); nothing here reads or buys anything.
- * Variants are plain functions, called directly from Dashboard so `fmt` (ns.format)
- * runs before React renders.
+ * PROTOTYPE — the "next buy" purchaser panel for the status screen's
+ * purchaser tab. Data is STUBBED (simulated from income) until the purchaser
+ * publishes a real status. Called directly from Dashboard so `fmt`
+ * (ns.format) runs before React renders.
  */
 import { carbonfox as c } from '@/lib/status/theme'
 
@@ -24,28 +23,6 @@ export interface PurchaserStub {
   homeCores: number
   queue: PurchaseStep[]
   history: { ago: number; label: string; cost: number }[]
-}
-
-const NAMES = ['A · next buy', 'B · fleet grid', 'C · roadmap']
-let variant = 0
-let listening = false
-
-export const variantIndex = () => variant
-
-/** Flip variants; the loop in status.tsx notices via `variantIndex()`. */
-export function installSwitcherKeys() {
-  if (listening) return
-  listening = true
-  document.addEventListener('keydown', (e) => {
-    const t = e.target as HTMLElement | null
-    if (t && /^(INPUT|TEXTAREA)$/.test(t.tagName)) return
-    if (e.key === 'ArrowLeft') cycle(-1)
-    if (e.key === 'ArrowRight') cycle(1)
-  })
-}
-
-function cycle(by: number) {
-  variant = (variant + by + NAMES.length) % NAMES.length
 }
 
 /** Simulated purchaser state that advances with wall-clock time. */
@@ -79,65 +56,6 @@ export function stubPurchaser(income: number): PurchaserStub {
   }
 }
 
-export function Prototype(p: PurchaserStub, income: number, fmt: Fmt) {
-  const body =
-    variant === 0
-      ? variantA(p, income, fmt)
-      : variant === 1
-        ? variantB(p, fmt)
-        : variantC(p, income, fmt)
-
-  return (
-    <>
-      {body}
-      <div
-        style={{
-          position: 'fixed',
-          bottom: 14,
-          left: '50%',
-          transform: 'translateX(-50%)',
-          background: c.fg,
-          color: c.bg0,
-          borderRadius: 20,
-          padding: '4px 14px',
-          display: 'flex',
-          gap: 14,
-          alignItems: 'center',
-          fontWeight: 'bold',
-          boxShadow: '0 2px 10px #000a',
-          zIndex: 9999,
-        }}
-      >
-        <button
-          type="button"
-          style={{
-            cursor: 'pointer',
-            background: 'none',
-            border: 'none',
-            font: 'inherit',
-          }}
-          onClick={() => cycle(-1)}
-        >
-          ◀
-        </button>
-        <span>{NAMES[variant]}</span>
-        <button
-          type="button"
-          style={{
-            cursor: 'pointer',
-            background: 'none',
-            border: 'none',
-            font: 'inherit',
-          }}
-          onClick={() => cycle(1)}
-        >
-          ▶
-        </button>
-      </div>
-    </>
-  )
-}
-
 const Box = ({
   title,
   children,
@@ -168,7 +86,7 @@ const Box = ({
 const dim = { color: c.comment, fontSize: 12 } as const
 
 /** A: one big bar toward the next purchase, with ETA and the last few buys. */
-function variantA(p: PurchaserStub, income: number, fmt: Fmt) {
+export function nextBuy(p: PurchaserStub, income: number, fmt: Fmt) {
   const next = p.queue[0]
   const share = Math.min(1, p.budget / next.cost)
   const missing = Math.max(0, next.cost - p.budget)
@@ -212,126 +130,6 @@ function variantA(p: PurchaserStub, income: number, fmt: Fmt) {
           <span>${fmt.number(h.cost, 1)}</span>
         </div>
       ))}
-    </Box>
-  )
-}
-
-/** B: the whole fleet as a grid of cells, brightness = how upgraded each is. */
-function variantB(p: PurchaserStub, fmt: Fmt) {
-  const slots = Array.from({ length: p.cloudLimit }, (_, i) => p.cloudRams[i])
-  const level = (ram: number) => Math.log2(ram) / Math.log2(p.cloudMaxRam) // 0..1
-
-  const homeRamLevel = Math.log2(p.homeRam) / Math.log2(p.homeMaxRam)
-
-  return (
-    <Box title="purchaser · fleet">
-      <div
-        style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(5, 1fr)',
-          gap: 4,
-        }}
-      >
-        {slots.map((ram, i) => (
-          <div
-            // biome-ignore lint/suspicious/noArrayIndexKey: prototype
-            key={i}
-            style={{
-              height: 34,
-              borderRadius: 4,
-              display: 'flex',
-              flexDirection: 'column',
-              alignItems: 'center',
-              justifyContent: 'center',
-              fontSize: 11,
-              border: ram ? 'none' : `1px dashed ${c.sel1}`,
-              color: ram ? c.bg0 : c.sel1,
-              background: ram
-                ? `rgba(8,189,186,${0.25 + 0.75 * level(ram)})`
-                : 'transparent',
-            }}
-          >
-            {ram ? fmt.ram(ram) : 'empty'}
-          </div>
-        ))}
-      </div>
-      <div style={dim}>
-        {p.cloudRams.length}/{p.cloudLimit} servers · max{' '}
-        {fmt.ram(p.cloudMaxRam)} each
-      </div>
-      <div style={{ display: 'flex', gap: 14 }}>
-        <div style={{ flex: 1 }}>
-          <div style={dim}>home RAM {fmt.ram(p.homeRam)}</div>
-          <div style={{ background: c.bg0, height: 8, borderRadius: 3 }}>
-            <div
-              style={{
-                width: `${homeRamLevel * 100}%`,
-                height: 8,
-                borderRadius: 3,
-                background: c.magenta,
-              }}
-            />
-          </div>
-        </div>
-        <div style={{ flex: 1 }}>
-          <div style={dim}>home cores {p.homeCores}/8</div>
-          <div style={{ background: c.bg0, height: 8, borderRadius: 3 }}>
-            <div
-              style={{
-                width: `${(p.homeCores / 8) * 100}%`,
-                height: 8,
-                borderRadius: 3,
-                background: c.pink,
-              }}
-            />
-          </div>
-        </div>
-      </div>
-    </Box>
-  )
-}
-
-/** C: the planned purchase queue as a timeline, each step with a cumulative ETA. */
-function variantC(p: PurchaserStub, income: number, fmt: Fmt) {
-  let running = 0
-  const rate = income * 0.5
-
-  return (
-    <Box title="purchaser · roadmap">
-      <div style={dim}>
-        budget ${fmt.number(p.budget, 2)} · spends 50% of income (≈ $
-        {fmt.number(rate, 1)}/s)
-      </div>
-      {p.queue.map((s, i) => {
-        running += s.cost
-        const etaMs =
-          rate > 0 ? Math.max(0, (running - p.budget) / rate) * 1000 : Infinity
-        const ready = etaMs === 0
-        return (
-          <div
-            key={s.label}
-            style={{
-              display: 'flex',
-              gap: 8,
-              alignItems: 'baseline',
-              opacity: 1 - i * 0.12,
-            }}
-          >
-            <span style={{ color: ready ? c.green : c.sel1 }}>
-              {ready ? '●' : '○'}
-            </span>
-            <span style={{ flex: 1, color: i === 0 ? c.blue : c.fg }}>
-              {s.label}
-            </span>
-            <span style={dim}>${fmt.number(s.cost, 1)}</span>
-            <span
-              style={{ ...dim, width: 70, textAlign: 'right', color: c.teal }}
-            >
-              {ready ? 'now' : `+${fmt.time(etaMs)}`}
-            </span>
-          </div>
-        )
-      })}
     </Box>
   )
 }

@@ -11,12 +11,11 @@ import {
   type SharerStatus,
 } from '@/lib/status/protocol'
 import {
-  installSwitcherKeys,
-  Prototype,
+  nextBuy,
   type PurchaserStub,
   stubPurchaser,
-  variantIndex,
-} from '@/lib/status/purchaser-prototype' // PROTOTYPE
+} from '@/lib/status/purchaser-prototype' // PROTOTYPE data
+import { currentTab, installTabKeys, TabBar, tabIndex } from '@/lib/status/tabs'
 import { carbonfox as c } from '@/lib/status/theme'
 import { rankTargets } from '@/lib/target/client'
 import type { TargetInfo } from '@/lib/target/protocol'
@@ -75,7 +74,7 @@ export const main = entry(async (ns) => {
   ns.ui.resizeTail(TAIL_WIDTH, TAIL_HEIGHT)
   ns.disableLog('ALL')
 
-  installSwitcherKeys() // PROTOTYPE
+  installTabKeys()
   let candidates: TargetInfo[] | null = null
 
   for (let tick = 0; ; tick++) {
@@ -106,11 +105,11 @@ export const main = entry(async (ns) => {
     // Dashboard would then trip the one-pending-ns-call rule. Everything below
     // Dashboard only gets plain strings.
     ns.printRaw(Dashboard(view))
-    // PROTOTYPE: wake early when the variant is flipped.
-    const shown = variantIndex()
+    // Wake early when the tab is flipped.
+    const shown = tabIndex()
     for (
       let waited = 0;
-      waited < REFRESH_MS && variantIndex() === shown;
+      waited < REFRESH_MS && tabIndex() === shown;
       waited += 100
     ) {
       await ns.sleep(100)
@@ -192,6 +191,7 @@ function Dashboard({
     ? { label: 'OFFLINE', color: c.red }
     : PHASE[status?.phase ?? 'searching']
 
+  const tab = currentTab()
   const hacked = new Set(lanes.map((l) => l.lane.target))
 
   return (
@@ -216,107 +216,121 @@ function Dashboard({
         <Pill label={phase.label} color={phase.color} />
       </div>
 
-      <Panel>
-        <div
-          style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}
-        >
-          <Stat
-            label="income"
-            value={`$${fmt.number(income, 2)}/s`}
-            color={c.green}
-          />
-          <Stat
-            label="expected"
-            value={`$${fmt.number(status?.estIncomePerSec ?? 0, 2)}/s`}
-            color={c.teal}
-          />
-          <Stat
-            label="in flight"
-            value={String(status?.inFlight ?? 0)}
-            color={c.cyan}
-          />
-          <Stat
-            label="launched"
-            value={fmt.number(status?.batchesLaunched ?? 0, 1)}
-            color={c.magenta}
-          />
-        </div>
-      </Panel>
+      <TabBar />
 
-      {Prototype(purchaser, income, fmt) /* PROTOTYPE */}
+      {tab === 'overview' && (
+        <>
+          <Panel>
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: '1fr 1fr',
+                gap: 10,
+              }}
+            >
+              <Stat
+                label="income"
+                value={`$${fmt.number(income, 2)}/s`}
+                color={c.green}
+              />
+              <Stat
+                label="expected"
+                value={`$${fmt.number(status?.estIncomePerSec ?? 0, 2)}/s`}
+                color={c.teal}
+              />
+              <Stat
+                label="in flight"
+                value={String(status?.inFlight ?? 0)}
+                color={c.cyan}
+              />
+              <Stat
+                label="launched"
+                value={fmt.number(status?.batchesLaunched ?? 0, 1)}
+                color={c.magenta}
+              />
+            </div>
+          </Panel>
 
-      {lanes.map((l) => lanePanel(l, fmt))}
-
-      <Panel title="pool">
-        {pool ? (
-          <>
-            {ramBar('home', pool.home, fmt)}
-            {ramBar(`${pool.others.hosts} servers`, pool.others, fmt)}
-          </>
-        ) : (
-          <Dim>network service not responding</Dim>
-        )}
-      </Panel>
-
-      {sharer && (
-        <Panel title="share">
-          <div style={{ display: 'flex', gap: 14 }}>
-            <Stat
-              label="threads"
-              value={fmt.number(sharer.threads, 0)}
-              color={c.magenta}
-              small
-            />
-            <Stat
-              label="power"
-              value={`x${sharer.power.toFixed(3)}`}
-              color={c.cyan}
-              small
-            />
-          </div>
-          <Dim>{sharer.message}</Dim>
-        </Panel>
+          {lanes.map((l) => lanePanel(l, fmt))}
+        </>
       )}
 
-      <Panel title="candidates">
-        {candidates === null ? (
-          <Dim>target service not responding</Dim>
-        ) : candidates.length === 0 ? (
-          <Dim>nothing hackable yet</Dim>
-        ) : (
-          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-            <thead>
-              <tr style={{ color: c.comment, textAlign: 'right' }}>
-                <th style={{ textAlign: 'left', fontWeight: 'normal' }}>
-                  server
-                </th>
-                <th style={{ fontWeight: 'normal' }}>$/s</th>
-                <th style={{ fontWeight: 'normal' }}>prep</th>
-                <th style={{ fontWeight: 'normal' }}>hack</th>
-              </tr>
-            </thead>
-            <tbody>
-              {candidates.map((t) => (
-                <tr
-                  key={t.host}
-                  style={{
-                    textAlign: 'right',
-                    color: hacked.has(t.host) ? c.blue : c.fg,
-                  }}
-                >
-                  <td style={{ textAlign: 'left' }}>
-                    {hacked.has(t.host) ? '● ' : ''}
-                    {t.host}
-                  </td>
-                  <td>${fmt.number(t.incomePerSec, 1)}</td>
-                  <td>{t.prepMs > 0 ? fmt.time(t.prepMs) : 'ready'}</td>
-                  <td>{fmt.percent(t.fraction, 0)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </Panel>
+      {tab === 'purchaser' && nextBuy(purchaser, income, fmt)}
+
+      {tab === 'pool' && (
+        <>
+          <Panel title="pool">
+            {pool ? (
+              <>
+                {ramBar('home', pool.home, fmt)}
+                {ramBar(`${pool.others.hosts} servers`, pool.others, fmt)}
+              </>
+            ) : (
+              <Dim>network service not responding</Dim>
+            )}
+          </Panel>
+
+          {sharer && (
+            <Panel title="share">
+              <div style={{ display: 'flex', gap: 14 }}>
+                <Stat
+                  label="threads"
+                  value={fmt.number(sharer.threads, 0)}
+                  color={c.magenta}
+                  small
+                />
+                <Stat
+                  label="power"
+                  value={`x${sharer.power.toFixed(3)}`}
+                  color={c.cyan}
+                  small
+                />
+              </div>
+              <Dim>{sharer.message}</Dim>
+            </Panel>
+          )}
+
+          <Panel title="candidates">
+            {candidates === null ? (
+              <Dim>target service not responding</Dim>
+            ) : candidates.length === 0 ? (
+              <Dim>nothing hackable yet</Dim>
+            ) : (
+              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                <thead>
+                  <tr style={{ color: c.comment, textAlign: 'right' }}>
+                    <th style={{ textAlign: 'left', fontWeight: 'normal' }}>
+                      server
+                    </th>
+                    <th style={{ fontWeight: 'normal' }}>$/s</th>
+                    <th style={{ fontWeight: 'normal' }}>prep</th>
+                    <th style={{ fontWeight: 'normal' }}>hack</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {candidates.map((t) => (
+                    <tr
+                      key={t.host}
+                      style={{
+                        textAlign: 'right',
+                        color: hacked.has(t.host) ? c.blue : c.fg,
+                      }}
+                    >
+                      <td style={{ textAlign: 'left' }}>
+                        {hacked.has(t.host) ? '● ' : ''}
+                        {t.host}
+                      </td>
+                      <td>${fmt.number(t.incomePerSec, 1)}</td>
+                      <td>{t.prepMs > 0 ? fmt.time(t.prepMs) : 'ready'}</td>
+                      <td>{fmt.percent(t.fraction, 0)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </Panel>
+        </>
+      )}
 
       <Dim>
         {offline ? 'no recent update from the batcher' : status?.message}
