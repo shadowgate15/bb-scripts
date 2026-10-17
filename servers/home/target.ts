@@ -5,6 +5,7 @@ import { rootAll } from '@/lib/network/client'
 import { serve } from '@/lib/port-rpc/server'
 import { type PrepRam, planPrep, prepRounds } from '@/lib/prep'
 import {
+  type SkippedTarget,
   type TargetInfo,
   type TargetReport,
   type TargetRpc,
@@ -22,6 +23,8 @@ const HORIZON_S = 900
 const SWITCH_RATIO = 1.5
 /** A target sharing the pool must earn at least this share of the best one's income. */
 const MIN_LANE_SHARE = 0.05
+/** Candidates past the lane limit are listed only this far, to keep logs short. */
+const SKIPPED_SHOWN = 8
 
 /**
  * Ranks rooted servers by what they would earn us: batching income given the
@@ -119,11 +122,22 @@ export const main = entry(async (ns) => {
     const biased = (t: TargetInfo) =>
       t.score * (keep.includes(t.host) ? SWITCH_RATIO : 1)
     const lanes: TargetInfo[] = []
+    const skipped: SkippedTarget[] = []
     let pool = ram.pool
     let home = ram.home
 
     for (const t of targets.toSorted((a, b) => biased(b) - biased(a))) {
-      if (lanes.length >= limit) break
+      // Only the leading candidates are worth explaining.
+      const skip = (reason: string) => {
+        if (skipped.length < SKIPPED_SHOWN) {
+          skipped.push({ host: t.host, score: t.score, reason })
+        }
+      }
+
+      if (lanes.length >= limit) {
+        skip('lane limit')
+        continue
+      }
 
       // The first gets the whole pool, which is how it was already planned.
       let next = t
@@ -131,11 +145,19 @@ export const main = entry(async (ns) => {
       if (lanes.length > 0) {
         const plan = chooseBatch(t.host, pool, home)
 
-        if ('reason' in plan) continue
+        if ('reason' in plan) {
+          skip(`no fit in the remaining RAM: ${plan.reason}`)
+          continue
+        }
 
         next = describe(t.host, plan, ram)
 
-        if (next.incomePerSec < lanes[0].incomePerSec * MIN_LANE_SHARE) continue
+        if (next.incomePerSec < lanes[0].incomePerSec * MIN_LANE_SHARE) {
+          skip(
+            `earns $${next.incomePerSec.toPrecision(3)}/s in the remaining RAM, under ${MIN_LANE_SHARE * 100}% of the best`,
+          )
+          continue
+        }
       }
 
       lanes.push(next)
@@ -143,7 +165,7 @@ export const main = entry(async (ns) => {
       home -= next.homeUse
     }
 
-    return lanes
+    return { lanes, skipped }
   }
 
   const rank = async () => (await evaluate()).targets

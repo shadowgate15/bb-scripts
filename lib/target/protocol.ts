@@ -26,6 +26,13 @@ export interface TargetInfo {
   score: number
 }
 
+/** A candidate that did not get a lane, and why. */
+export interface SkippedTarget {
+  host: string
+  score: number
+  reason: string
+}
+
 /** Why a ranking came back the way it did, for logs. */
 export interface TargetReport {
   /** Servers we have root on. */
@@ -50,7 +57,7 @@ export interface TargetRpc extends RpcSchema {
    */
   lanes: {
     params: { limit: number; keep: string[] }
-    result: TargetInfo[]
+    result: { lanes: TargetInfo[]; skipped: SkippedTarget[] }
   }
   /** Why servers were left out of `rank`. */
   explain: { params: undefined; result: TargetReport }

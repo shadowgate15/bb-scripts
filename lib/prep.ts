@@ -12,6 +12,13 @@ export interface PrepPlan {
   fallback: RunParams
   /** Time until the slowest job finishes, in ms. */
   ms: number
+  /** The target's readings when this plan was made, for logs. */
+  state: {
+    security: number
+    minSecurity: number
+    money: number
+    maxMoney: number
+  }
 }
 
 /** RAM available to prep: the whole pool, and home alone (where cores apply). */
@@ -142,5 +149,15 @@ export function planPrep(
     ? job('workers/weaken.js', Math.ceil(excess / ns.weakenAnalyze(1)))
     : job('workers/grow.js', step.grow)
 
-  return { combined, fallback, ms: ns.getWeakenTime(target) }
+  return {
+    combined,
+    fallback,
+    ms: ns.getWeakenTime(target),
+    state: {
+      security: ns.getServerSecurityLevel(target),
+      minSecurity: ns.getServerMinSecurityLevel(target),
+      money,
+      maxMoney,
+    },
+  }
 }

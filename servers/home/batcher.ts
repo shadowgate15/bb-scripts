@@ -1,5 +1,6 @@
 import { type BatchSizes, GAP_MS, SPACING_MS } from '@/lib/batch'
 import { entry } from '@/lib/entry'
+import { createLog, type Log } from '@/lib/log'
 import type { RunParams } from '@/lib/runner/protocol'
 import { killPids, run, runAll } from '@/lib/runner/run'
 import {
@@ -29,6 +30,9 @@ const IDLE_MS = 5_000
  * service only drops one for a clearly better candidate; looking is cheap.
  */
 const RECHECK_MS = 60_000
+/** How often a status sample goes in the log. */
+const SAMPLE_MS = 30_000
+const LOG_FILE = 'logs/batcher.jsonl.txt'
 
 /** One target being prepped or batched, and what is in flight against it. */
 interface Lane {
@@ -43,6 +47,9 @@ interface Lane {
   /** When each in-flight batch lands. */
   landings: number[]
   launched: number
+  /** Launches that found no room, and batches killed for drifting. */
+  skipped: number
+  killed: number
   sizes: BatchSizes | null
   prepThreads: LaneStatus['prepThreads']
   prepReadyAt: number | null
@@ -64,12 +71,17 @@ export const main = entry(async (ns) => {
   ns.ui.openTail()
   ns.disableLog('ALL')
 
+  const log = createLog(ns, LOG_FILE)
+
+  log('start', { maxLanes: MAX_LANES, recheckMs: RECHECK_MS })
+
   let lanes: Lane[] = []
   let nextPlan = 0
+  let nextSample = 0
   let lastReport = ''
   let searchMessage = 'starting'
 
-  const publish = () => {
+  const publish = (): BatcherStatus => {
     const now = Date.now()
     const statuses = lanes.map((lane): LaneStatus => {
       lane.landings = lane.landings.filter((t) => t > now)
@@ -115,11 +127,13 @@ export const main = entry(async (ns) => {
 
     port.clear()
     port.write(status)
+
+    return status
   }
 
   while (true) {
     if (Date.now() >= nextPlan) {
-      lanes = await replan(ns, lanes)
+      lanes = await replan(ns, lanes, log)
 
       if (lanes.length === 0) {
         lastReport = await reportNoTarget(ns, lastReport)
@@ -131,7 +145,7 @@ export const main = entry(async (ns) => {
     }
 
     for (const lane of lanes) {
-      if (Date.now() >= lane.wakeAt) await step(ns, lane)
+      if (Date.now() >= lane.wakeAt) await step(ns, lane, log)
     }
 
     // A retired lane is gone once its last batch has landed.
@@ -141,30 +155,69 @@ export const main = entry(async (ns) => {
       (l) =>
         !(l.retired && now >= l.busyUntil && l.landings.every((t) => t <= now)),
     )
-    publish()
+
+    const status = publish()
+
+    if (now >= nextSample) {
+      nextSample = now + SAMPLE_MS
+      log('sample', {
+        income: ns.getTotalScriptIncome()[0],
+        expected: status.estIncomePerSec,
+        plannedRam: status.plannedRam,
+        lanes: lanes.map((l, i) => ({
+          host: l.info.host,
+          phase: l.phase,
+          retired: l.retired,
+          inFlight: status.lanes[i].inFlight,
+          launched: l.launched,
+          skipped: l.skipped,
+          killed: l.killed,
+          expected: l.info.incomePerSec,
+          message: l.message,
+        })),
+      })
+    }
+
     await ns.sleep(SPACING_MS)
   }
 })
 
-/** The last plan logged, so an unchanged plan isn't logged again. */
+/** The last plan printed, so an unchanged plan isn't printed again. */
 let lastPlan = ''
 
 /**
  * Applies the target service's plan to the running lanes: keeps and refreshes
  * the ones it still wants, retires the rest, and adds lanes for new targets.
  */
-async function replan(ns: NS, lanes: Lane[]): Promise<Lane[]> {
+async function replan(ns: NS, lanes: Lane[], log: Log): Promise<Lane[]> {
   const keep = lanes.filter((l) => !l.retired).map((l) => l.info.host)
-  const wanted = await allocateTargets(MAX_LANES, keep)
-  const summary = wanted
-    .map(
-      (t) =>
-        `${t.host} score ${t.score.toPrecision(3)}, $${t.incomePerSec.toPrecision(3)}/s, prep ${Math.round(t.prepMs / 1000)}s, ${t.ramUse.toFixed(0)}GB`,
-    )
-    .join('\n  ')
+  const { lanes: wanted, skipped } = await allocateTargets(MAX_LANES, keep)
+
+  log('plan', {
+    keep,
+    wanted: wanted.map((t) => ({
+      host: t.host,
+      score: t.score,
+      incomePerSec: t.incomePerSec,
+      prepMs: t.prepMs,
+      fraction: t.fraction,
+      homeCores: t.homeCores,
+      inFlight: t.inFlight,
+      ramUse: t.ramUse,
+      homeUse: t.homeUse,
+    })),
+    skipped,
+    lanes: lanes.map((l) => ({
+      host: l.info.host,
+      phase: l.phase,
+      retired: l.retired,
+    })),
+  })
+
+  const summary = wanted.map((t) => t.host).join(', ')
 
   if (summary !== lastPlan) {
-    ns.print(`plan (kept: ${keep.join(', ') || 'none'}):\n  ${summary}`)
+    ns.print(`plan: ${summary || 'none'} (kept: ${keep.join(', ') || 'none'})`)
     lastPlan = summary
   }
 
@@ -172,6 +225,8 @@ async function replan(ns: NS, lanes: Lane[]): Promise<Lane[]> {
     const info = wanted.find((t) => t.host === lane.info.host)
 
     if (info !== undefined) {
+      if (lane.retired) log('lane_revive', { host: info.host })
+
       lane.info = info
       lane.retired = false
     } else if (!lane.retired) {
@@ -179,6 +234,7 @@ async function replan(ns: NS, lanes: Lane[]): Promise<Lane[]> {
       lane.phase = 'retargeting'
       lane.message = 'dropped from the plan: draining batches'
       ns.print(`${lane.info.host}: dropped, draining batches`)
+      log('lane_drop', { host: lane.info.host, launched: lane.launched })
     }
   }
 
@@ -186,6 +242,7 @@ async function replan(ns: NS, lanes: Lane[]): Promise<Lane[]> {
     if (lanes.some((l) => l.info.host === info.host)) continue
 
     ns.print(`target: + ${info.host}`)
+    log('lane_add', { host: info.host })
     lanes.push({
       info,
       phase: 'prepping',
@@ -194,6 +251,8 @@ async function replan(ns: NS, lanes: Lane[]): Promise<Lane[]> {
       retired: false,
       landings: [],
       launched: 0,
+      skipped: 0,
+      killed: 0,
       sizes: null,
       prepThreads: null,
       prepReadyAt: null,
@@ -205,7 +264,7 @@ async function replan(ns: NS, lanes: Lane[]): Promise<Lane[]> {
 }
 
 /** Advances one lane: prep it if it needs that, otherwise launch a batch. */
-async function step(ns: NS, lane: Lane): Promise<void> {
+async function step(ns: NS, lane: Lane, log: Log): Promise<void> {
   const { info } = lane
 
   if (lane.retired) return
@@ -229,6 +288,17 @@ async function step(ns: NS, lane: Lane): Promise<void> {
       ns.print(
         `prep ${info.host}: ${what} (${launched > 0 ? 'launched' : 'no RAM'})`,
       )
+      log('prep', {
+        host: info.host,
+        what,
+        launched: launched > 0,
+        threads: {
+          weaken: threadsOf('workers/weaken.js'),
+          grow: threadsOf('workers/grow.js'),
+        },
+        ms: prep.ms,
+        ...prep.state,
+      })
       lane.phase = 'prepping'
       lane.sizes = null
       lane.prepThreads =
@@ -261,8 +331,12 @@ async function step(ns: NS, lane: Lane): Promise<void> {
     ns.print(
       `${info.host}: batch ${lane.launched} drifted out of order; killed`,
     )
+    log('drift_kill', { host: info.host, batch: lane.launched })
+    lane.killed++
     ok = false
   }
+
+  if (!ok) lane.skipped++
 
   if (ok) {
     lane.launched++
@@ -270,7 +344,18 @@ async function step(ns: NS, lane: Lane): Promise<void> {
     lane.landings.push(Date.now() + batch.durationMs)
   }
 
-  lane.phase = ok ? 'batching' : 'waiting'
+  const phase = ok ? 'batching' : 'waiting'
+
+  // Flipping between these two is routine; the sample counts it.
+  if (
+    lane.phase !== phase &&
+    lane.phase !== 'batching' &&
+    lane.phase !== 'waiting'
+  ) {
+    log('phase', { host: info.host, from: lane.phase, to: phase })
+  }
+
+  lane.phase = phase
   lane.sizes = batch.sizes
   lane.prepThreads = null
   lane.prepReadyAt = null
