@@ -8,6 +8,11 @@ export function rankTargets(limit?: number) {
   return client().call('rank', { limit })
 }
 
+/** The servers to hack at once, each planned for the RAM the earlier ones leave. */
+export function allocateTargets(limit: number, keep: string[]) {
+  return client().call('lanes', { limit, keep })
+}
+
 export function getBestTarget() {
   return client().call('best', undefined)
 }

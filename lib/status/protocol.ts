@@ -18,13 +18,12 @@ export type BatcherPhase =
   /** Pool is full: waiting for batches to land and free RAM. */
   | 'waiting'
 
-/** What the batcher is doing right now. Shared with whatever displays it. */
-export interface BatcherStatus {
-  updatedAt: number
-  phase: BatcherPhase
-  target: string | null
+/** One target the batcher is working on. */
+export interface LaneStatus {
+  target: string
+  phase: Exclude<BatcherPhase, 'searching'>
   /** Share of max money each batch steals. */
-  fraction: number | null
+  fraction: number
   sizes: BatchSizes | null
   /** Cores grow and weaken are pinned to home for, or 1 if they run anywhere. */
   homeCores: number | null
@@ -42,11 +41,26 @@ export interface BatcherStatus {
   message: string
 }
 
+/** What the batcher is doing right now. Shared with whatever displays it. */
+export interface BatcherStatus {
+  updatedAt: number
+  /** The busiest lane's phase, or 'searching' when there are none. */
+  phase: BatcherPhase
+  /** Targets hacked at once, best first. */
+  lanes: LaneStatus[]
+  /** Totals across lanes. */
+  estIncomePerSec: number
+  batchesLaunched: number
+  inFlight: number
+  message: string
+}
+
 export function isBatcherStatus(value: unknown): value is BatcherStatus {
   return (
     typeof value === 'object' &&
     value !== null &&
     typeof (value as BatcherStatus).updatedAt === 'number' &&
-    typeof (value as BatcherStatus).phase === 'string'
+    typeof (value as BatcherStatus).phase === 'string' &&
+    Array.isArray((value as BatcherStatus).lanes)
   )
 }

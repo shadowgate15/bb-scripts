@@ -5,6 +5,7 @@ import {
   type BatcherPhase,
   type BatcherStatus,
   isBatcherStatus,
+  type LaneStatus,
 } from '@/lib/status/protocol'
 import { carbonfox as c } from '@/lib/status/theme'
 import { rankTargets } from '@/lib/target/client'
@@ -40,10 +41,15 @@ interface TargetLive {
   minSecurity: number
 }
 
+interface LaneView {
+  lane: LaneStatus
+  live: TargetLive
+}
+
 interface View {
   status: BatcherStatus | null
   offline: boolean
-  target: TargetLive | null
+  lanes: LaneView[]
   pool: Pool | null
   income: number
   candidates: TargetInfo[] | null
@@ -69,7 +75,10 @@ export const main = entry(async (ns) => {
     const view: View = {
       status,
       offline: status === null || Date.now() > staleAfter(status),
-      target: status?.target ? readTarget(ns, status.target) : null,
+      lanes: (status?.lanes ?? []).map((lane) => ({
+        lane,
+        live: readTarget(ns, lane.target),
+      })),
       pool: await readPool(ns),
       income: ns.getTotalScriptIncome()[0],
       candidates,
@@ -86,9 +95,9 @@ export const main = entry(async (ns) => {
   }
 })
 
-/** When this snapshot should have been refreshed by. A prep wait is expected to be long. */
+/** When this snapshot should have been refreshed by. */
 function staleAfter(status: BatcherStatus): number {
-  return (status.prepReadyAt ?? status.updatedAt) + STALE_MS
+  return status.updatedAt + STALE_MS
 }
 
 function readStatus(ns: NS): BatcherStatus | null {
@@ -139,7 +148,7 @@ const clamp01 = (n: number) =>
 function Dashboard({
   status,
   offline,
-  target,
+  lanes,
   pool,
   income,
   candidates,
@@ -148,6 +157,8 @@ function Dashboard({
   const phase = offline
     ? { label: 'OFFLINE', color: c.red }
     : PHASE[status?.phase ?? 'searching']
+
+  const hacked = new Set(lanes.map((l) => l.lane.target))
 
   return (
     <div
@@ -164,7 +175,9 @@ function Dashboard({
     >
       <div style={{ display: 'flex', justifyContent: 'space-between' }}>
         <span style={{ color: c.blue, fontWeight: 'bold', fontSize: 15 }}>
-          {status?.target ?? 'no target'}
+          {lanes.length > 0
+            ? lanes.map((l) => l.lane.target).join(' · ')
+            : 'no target'}
         </span>
         <Pill label={phase.label} color={phase.color} />
       </div>
@@ -196,99 +209,7 @@ function Dashboard({
         </div>
       </Panel>
 
-      {target && (
-        <Panel title="target">
-          <Bar
-            label="money"
-            value={target.money / target.maxMoney}
-            color={c.green}
-            right={`$${fmt.number(target.money, 2)} / $${fmt.number(target.maxMoney, 2)}`}
-          />
-          <Bar
-            label="security"
-            // Full bar means at the floor; empty means 3x or more above it.
-            value={
-              1 -
-              (target.security - target.minSecurity) /
-                (target.minSecurity * 2 || 1)
-            }
-            color={c.cyan}
-            right={`${target.security.toFixed(2)} / min ${target.minSecurity.toFixed(2)}`}
-          />
-          {status?.phase === 'prepping' && status.prepReadyAt !== null && (
-            <Dim>
-              prep step lands in{' '}
-              {fmt.time(Math.max(0, status.prepReadyAt - Date.now()))}
-            </Dim>
-          )}
-        </Panel>
-      )}
-
-      {status?.phase === 'prepping' && status.prepThreads && (
-        <Panel title="prep">
-          <div style={{ display: 'flex', gap: 14 }}>
-            <Stat
-              label="weaken"
-              value={fmt.number(status.prepThreads.weaken, 0)}
-              color={c.blue}
-              small
-            />
-            <Stat
-              label="grow"
-              value={fmt.number(status.prepThreads.grow, 0)}
-              color={c.green}
-              small
-            />
-          </div>
-        </Panel>
-      )}
-
-      {status?.sizes && status.fraction !== null && (
-        <Panel
-          title={`batch · ${fmt.percent(status.fraction, 0)} of max money`}
-        >
-          {typeof status.nextLandingAt === 'number' &&
-            typeof status.lastLandingAt === 'number' && (
-              <Dim>
-                next batch lands in{' '}
-                {fmt.time(Math.max(0, status.nextLandingAt - Date.now()))} ·
-                last in{' '}
-                {fmt.time(Math.max(0, status.lastLandingAt - Date.now()))}
-              </Dim>
-            )}
-          <Dim>
-            {status.homeCores !== null && status.homeCores > 1
-              ? `grow + weaken pinned to home (${status.homeCores} cores) · hack on any server`
-              : 'all jobs spread across the pool'}
-          </Dim>
-          <div style={{ display: 'flex', gap: 14 }}>
-            <Stat
-              label="hack"
-              value={String(status.sizes.hack)}
-              color={c.red}
-              small
-            />
-            <Stat
-              label="weaken"
-              value={String(status.sizes.weakenAfterHack)}
-              color={c.blue}
-              small
-            />
-            <Stat
-              label="grow"
-              value={String(status.sizes.grow)}
-              color={c.green}
-              small
-            />
-            <Stat
-              label="weaken"
-              value={String(status.sizes.weakenAfterGrow)}
-              color={c.blue}
-              small
-            />
-          </div>
-        </Panel>
-      )}
+      {lanes.map((l) => lanePanel(l, fmt))}
 
       <Panel title="pool">
         {pool ? (
@@ -324,11 +245,11 @@ function Dashboard({
                   key={t.host}
                   style={{
                     textAlign: 'right',
-                    color: t.host === status?.target ? c.blue : c.fg,
+                    color: hacked.has(t.host) ? c.blue : c.fg,
                   }}
                 >
                   <td style={{ textAlign: 'left' }}>
-                    {t.host === status?.target ? '● ' : ''}
+                    {hacked.has(t.host) ? '● ' : ''}
                     {t.host}
                   </td>
                   <td>${fmt.number(t.incomePerSec, 1)}</td>
@@ -345,6 +266,104 @@ function Dashboard({
         {offline ? 'no recent update from the batcher' : status?.message}
       </Dim>
     </div>
+  )
+}
+
+/** Called as a function, like Dashboard, so `fmt` runs before React renders. */
+function lanePanel({ lane, live }: LaneView, fmt: NS['format']) {
+  const phase = PHASE[lane.phase]
+
+  return (
+    <Panel key={lane.target}>
+      <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+        <span style={{ color: c.blue, fontWeight: 'bold' }}>{lane.target}</span>
+        <Pill label={phase.label} color={phase.color} />
+      </div>
+      <Bar
+        label="money"
+        value={live.money / live.maxMoney}
+        color={c.green}
+        right={`$${fmt.number(live.money, 2)} / $${fmt.number(live.maxMoney, 2)}`}
+      />
+      <Bar
+        label="security"
+        // Full bar means at the floor; empty means 3x or more above it.
+        value={
+          1 - (live.security - live.minSecurity) / (live.minSecurity * 2 || 1)
+        }
+        color={c.cyan}
+        right={`${live.security.toFixed(2)} / min ${live.minSecurity.toFixed(2)}`}
+      />
+      {lane.phase === 'prepping' && typeof lane.prepReadyAt === 'number' && (
+        <Dim>
+          prep step lands in{' '}
+          {fmt.time(Math.max(0, lane.prepReadyAt - Date.now()))}
+        </Dim>
+      )}
+      {lane.phase === 'prepping' && lane.prepThreads && (
+        <div style={{ display: 'flex', gap: 14 }}>
+          <Stat
+            label="weaken"
+            value={fmt.number(lane.prepThreads.weaken, 0)}
+            color={c.blue}
+            small
+          />
+          <Stat
+            label="grow"
+            value={fmt.number(lane.prepThreads.grow, 0)}
+            color={c.green}
+            small
+          />
+        </div>
+      )}
+      {lane.sizes && (
+        <>
+          <Dim>
+            {fmt.percent(lane.fraction, 0)} of max money per batch · $
+            {fmt.number(lane.estIncomePerSec, 1)}/s expected
+          </Dim>
+          {typeof lane.nextLandingAt === 'number' &&
+            typeof lane.lastLandingAt === 'number' && (
+              <Dim>
+                next batch lands in{' '}
+                {fmt.time(Math.max(0, lane.nextLandingAt - Date.now()))} · last
+                in {fmt.time(Math.max(0, lane.lastLandingAt - Date.now()))}
+              </Dim>
+            )}
+          <Dim>
+            {lane.homeCores !== null && lane.homeCores > 1
+              ? `grow + weaken pinned to home (${lane.homeCores} cores) · hack on any server`
+              : 'all jobs spread across the pool'}
+          </Dim>
+          <div style={{ display: 'flex', gap: 14 }}>
+            <Stat
+              label="hack"
+              value={String(lane.sizes.hack)}
+              color={c.red}
+              small
+            />
+            <Stat
+              label="weaken"
+              value={String(lane.sizes.weakenAfterHack)}
+              color={c.blue}
+              small
+            />
+            <Stat
+              label="grow"
+              value={String(lane.sizes.grow)}
+              color={c.green}
+              small
+            />
+            <Stat
+              label="weaken"
+              value={String(lane.sizes.weakenAfterGrow)}
+              color={c.blue}
+              small
+            />
+          </div>
+        </>
+      )}
+    </Panel>
   )
 }
 

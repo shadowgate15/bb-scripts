@@ -2,16 +2,21 @@ import { type BatchSizes, GAP_MS, SPACING_MS } from '@/lib/batch'
 import { entry } from '@/lib/entry'
 import type { RunParams } from '@/lib/runner/protocol'
 import { killPids, run, runAll } from '@/lib/runner/run'
-import { BATCHER_STATUS_PORT, type BatcherStatus } from '@/lib/status/protocol'
 import {
+  BATCHER_STATUS_PORT,
+  type BatcherPhase,
+  type BatcherStatus,
+  type LaneStatus,
+} from '@/lib/status/protocol'
+import {
+  allocateTargets,
   explainTargets,
   planTargetPrep,
-  rankTargets,
 } from '@/lib/target/client'
 import type { TargetInfo } from '@/lib/target/protocol'
 
-/** A new target must score this many times the current one to replace it. */
-const SWITCH_RATIO = 1.5
+/** Most targets hacked at once; a pool too small for a second one runs just one. */
+const MAX_LANES = 4
 /** Tolerance when deciding the target is prepped enough to batch. */
 const SECURITY_SLACK = 0.1
 const MONEY_FLOOR = 0.98
@@ -19,198 +24,243 @@ const MONEY_FLOOR = 0.98
 const FINISH_BUFFER_MS = 200
 const IDLE_MS = 5_000
 /**
- * While batching, how often to look for a better target. Switching costs a
- * drain (about one weaken time with no income), so it only happens when the
- * candidate clears SWITCH_RATIO; looking is cheap.
+ * How often to re-plan the targets. A target dropped from the plan stops
+ * launching and drains (about one weaken time with no income), so the target
+ * service only drops one for a clearly better candidate; looking is cheap.
  */
 const RECHECK_MS = 60_000
 
+/** One target being prepped or batched, and what is in flight against it. */
+interface Lane {
+  info: TargetInfo
+  phase: LaneStatus['phase']
+  /** Nothing of this lane is in flight past this time. */
+  busyUntil: number
+  /** The lane does nothing before this: a prep wait, or a retry for RAM. */
+  wakeAt: number
+  /** Dropped from the plan: lands what is in flight, then goes. */
+  retired: boolean
+  /** When each in-flight batch lands. */
+  landings: number[]
+  launched: number
+  sizes: BatchSizes | null
+  prepThreads: LaneStatus['prepThreads']
+  prepReadyAt: number | null
+  message: string
+}
+
 /**
- * Prepares a target, then launches overlapping hack/weaken/grow/weaken batches
- * that land in that order, each GAP_MS apart. The target is sticky: it only
- * changes while nothing is in flight, and only for one that scores clearly
- * better. While batching it re-ranks every RECHECK_MS; if a candidate clears
- * the bar it stops launching, lets the in-flight batches land, then switches.
- * Whenever nothing is in flight the target is re-checked too, so drift gets
- * corrected instead of compounding. Publishes its state on
- * BATCHER_STATUS_PORT for the status view.
+ * Hacks up to MAX_LANES targets at once, the pool split between them by the
+ * target service. Each lane prepares its target, then launches overlapping
+ * hack/weaken/grow/weaken batches that land in that order, each GAP_MS apart.
+ * Lanes are sticky: the plan is re-read every RECHECK_MS and a lane only
+ * retires when the plan drops its target, then lands its batches before going.
+ * Publishes its state on BATCHER_STATUS_PORT for the status view.
+ *
+ * Lanes take turns within one loop rather than running concurrently, since a
+ * script may have only one `ns.sleep` pending.
  */
 export const main = entry(async (ns) => {
   ns.ui.openTail()
   ns.disableLog('ALL')
 
-  let info: TargetInfo | null = null
-  let busyUntil = 0
-  let batchId = 0
+  let lanes: Lane[] = []
+  let nextPlan = 0
   let lastReport = ''
-  let lastRecheck = 0
-  let draining: string | null = null
-  /** When each in-flight batch lands. */
-  let landings: number[] = []
+  let searchMessage = 'starting'
 
-  const status: BatcherStatus = {
-    updatedAt: 0,
-    phase: 'searching',
-    target: null,
-    fraction: null,
-    sizes: null,
-    homeCores: null,
-    estIncomePerSec: 0,
-    batchesLaunched: 0,
-    inFlight: 0,
-    nextLandingAt: null,
-    lastLandingAt: null,
-    prepThreads: null,
-    prepReadyAt: null,
-    message: 'starting',
-  }
-
-  const publish = (patch: Partial<BatcherStatus>) => {
+  const publish = () => {
     const now = Date.now()
+    const statuses = lanes.map((lane): LaneStatus => {
+      lane.landings = lane.landings.filter((t) => t > now)
 
-    landings = landings.filter((t) => t > now)
-    Object.assign(status, patch, {
-      updatedAt: now,
-      batchesLaunched: batchId,
-      inFlight: landings.length,
-      nextLandingAt: landings.length > 0 ? Math.min(...landings) : null,
-      lastLandingAt: landings.length > 0 ? Math.max(...landings) : null,
+      return {
+        target: lane.info.host,
+        phase: lane.phase,
+        fraction: lane.info.fraction,
+        sizes: lane.sizes,
+        homeCores: lane.sizes ? lane.info.homeCores : null,
+        estIncomePerSec: lane.info.incomePerSec,
+        batchesLaunched: lane.launched,
+        inFlight: lane.landings.length,
+        nextLandingAt:
+          lane.landings.length > 0 ? Math.min(...lane.landings) : null,
+        lastLandingAt:
+          lane.landings.length > 0 ? Math.max(...lane.landings) : null,
+        prepThreads: lane.prepThreads,
+        prepReadyAt: lane.prepReadyAt,
+        message: lane.message,
+      }
     })
-
+    const phase: BatcherPhase =
+      statuses.find((s) => s.phase === 'batching')?.phase ??
+      statuses[0]?.phase ??
+      'searching'
+    const status: BatcherStatus = {
+      updatedAt: now,
+      phase,
+      lanes: statuses,
+      estIncomePerSec: lanes
+        .filter((l) => !l.retired)
+        .reduce((sum, l) => sum + l.info.incomePerSec, 0),
+      batchesLaunched: statuses.reduce((sum, s) => sum + s.batchesLaunched, 0),
+      inFlight: statuses.reduce((sum, s) => sum + s.inFlight, 0),
+      message: statuses[0]?.message ?? searchMessage,
+    }
     const port = ns.getPortHandle(BATCHER_STATUS_PORT)
 
     port.clear()
-    port.write({ ...status })
+    port.write(status)
   }
 
   while (true) {
-    // Mid-flight readings are meaningless, so only inspect when nothing's running.
-    if (Date.now() >= busyUntil) {
-      draining = null
-      lastRecheck = Date.now()
+    if (Date.now() >= nextPlan) {
+      lanes = await replan(ns, lanes)
 
-      const ranked = await rankTargets()
-      const next = chooseTarget(ranked, info?.host ?? null)
-
-      if (next === null) {
+      if (lanes.length === 0) {
         lastReport = await reportNoTarget(ns, lastReport)
-        publish({
-          phase: 'searching',
-          target: null,
-          message: lastReport.split('\n')[0],
-        })
-        await ns.sleep(IDLE_MS)
-        continue
+        searchMessage = lastReport.split('\n')[0]
       }
 
-      if (next.host !== info?.host) {
-        ns.print(`target: ${info?.host ?? 'none'} -> ${next.host}`)
-      }
-
-      info = next
-
-      const prep = await planTargetPrep(info.host, SECURITY_SLACK, MONEY_FLOOR)
-
-      if (prep !== null) {
-        // All at once when it fits; otherwise one step at a time.
-        const { ok } = await runAll(prep.combined)
-        const launched = ok ? 1 : (await run(prep.fallback)).launched
-        const what = ok ? 'grow+weaken' : prep.fallback.script
-        const jobs = ok ? prep.combined : [prep.fallback]
-        const threadsOf = (script: string) =>
-          jobs
-            .filter((j) => j.script === script)
-            .reduce((sum, j) => sum + j.threads, 0)
-
-        ns.print(
-          `prep ${info.host}: ${what} (${launched > 0 ? 'launched' : 'no RAM'})`,
-        )
-        publish({
-          phase: 'prepping',
-          target: info.host,
-          fraction: info.fraction,
-          sizes: null,
-          homeCores: null,
-          estIncomePerSec: info.incomePerSec,
-          prepThreads:
-            launched > 0
-              ? {
-                  weaken: threadsOf('workers/weaken.js'),
-                  grow: threadsOf('workers/grow.js'),
-                }
-              : null,
-          prepReadyAt: launched > 0 ? Date.now() + prep.ms : null,
-          message:
-            launched > 0 ? `prepping with ${what}` : 'prep waiting for RAM',
-        })
-        await ns.sleep(launched > 0 ? prep.ms + FINISH_BUFFER_MS : IDLE_MS)
-        continue
-      }
+      nextPlan =
+        Date.now() + (lanes.some((l) => !l.retired) ? RECHECK_MS : IDLE_MS)
     }
 
-    if (info === null) continue
-
-    // Batching steadily never goes idle, so look for a better target on a timer.
-    if (draining === null && Date.now() - lastRecheck >= RECHECK_MS) {
-      lastRecheck = Date.now()
-
-      const better = chooseTarget(await rankTargets(), info.host)
-
-      if (better !== null && better.host !== info.host) {
-        draining = better.host
-        ns.print(`switching ${info.host} -> ${draining}: draining batches`)
-      } else if (better !== null) {
-        // Same target; take its refreshed batch fraction for the current pool.
-        info = better
-      }
+    for (const lane of lanes) {
+      if (Date.now() >= lane.wakeAt) await step(ns, lane)
     }
 
-    if (draining !== null) {
-      publish({
-        phase: 'retargeting',
-        message: `draining ${status.inFlight} batches, then switching to ${draining}`,
-      })
-      await ns.sleep(SPACING_MS)
-      continue
-    }
+    // A retired lane is gone once its last batch has landed.
+    const now = Date.now()
 
-    const batch = planBatch(ns, info, batchId)
-
-    const launch = await runAll(batch.jobs)
-    let { ok } = launch
-
-    if (ok && !landsInOrder(ns, info.host, batch)) {
-      // Durations moved under us (a level-up, or security off its floor), so
-      // the landings would be out of order and corrupt the target. Stop the
-      // whole batch before anything lands.
-      await killPids(launch.pids.flat())
-      ns.print(`${info.host}: batch ${batchId} drifted out of order; killed`)
-      ok = false
-    }
-
-    if (ok) {
-      batchId++
-      busyUntil = Date.now() + batch.durationMs + FINISH_BUFFER_MS
-      landings.push(Date.now() + batch.durationMs)
-    }
-
-    publish({
-      phase: ok ? 'batching' : 'waiting',
-      target: info.host,
-      fraction: info.fraction,
-      sizes: batch.sizes,
-      homeCores: info.homeCores,
-      estIncomePerSec: info.incomePerSec,
-      prepThreads: null,
-      prepReadyAt: null,
-      message: ok
-        ? 'launching batches'
-        : 'batch skipped, waiting for the next slot',
-    })
-
+    lanes = lanes.filter(
+      (l) =>
+        !(l.retired && now >= l.busyUntil && l.landings.every((t) => t <= now)),
+    )
+    publish()
     await ns.sleep(SPACING_MS)
   }
 })
+
+/**
+ * Applies the target service's plan to the running lanes: keeps and refreshes
+ * the ones it still wants, retires the rest, and adds lanes for new targets.
+ */
+async function replan(ns: NS, lanes: Lane[]): Promise<Lane[]> {
+  const keep = lanes.filter((l) => !l.retired).map((l) => l.info.host)
+  const wanted = await allocateTargets(MAX_LANES, keep)
+
+  for (const lane of lanes) {
+    const info = wanted.find((t) => t.host === lane.info.host)
+
+    if (info !== undefined) {
+      lane.info = info
+      lane.retired = false
+    } else if (!lane.retired) {
+      lane.retired = true
+      lane.phase = 'retargeting'
+      lane.message = 'dropped from the plan: draining batches'
+      ns.print(`${lane.info.host}: dropped, draining batches`)
+    }
+  }
+
+  for (const info of wanted) {
+    if (lanes.some((l) => l.info.host === info.host)) continue
+
+    ns.print(`target: + ${info.host}`)
+    lanes.push({
+      info,
+      phase: 'prepping',
+      busyUntil: 0,
+      wakeAt: 0,
+      retired: false,
+      landings: [],
+      launched: 0,
+      sizes: null,
+      prepThreads: null,
+      prepReadyAt: null,
+      message: 'starting',
+    })
+  }
+
+  return lanes
+}
+
+/** Advances one lane: prep it if it needs that, otherwise launch a batch. */
+async function step(ns: NS, lane: Lane): Promise<void> {
+  const { info } = lane
+
+  if (lane.retired) return
+
+  // Mid-flight readings are meaningless, so only inspect when nothing's running.
+  if (Date.now() >= lane.busyUntil) {
+    const prep = await planTargetPrep(info.host, SECURITY_SLACK, MONEY_FLOOR)
+
+    if (prep !== null) {
+      // All at once when it fits; otherwise one step at a time.
+      const { ok } = await runAll(prep.combined)
+      const launched = ok ? 1 : (await run(prep.fallback)).launched
+      const what = ok ? 'grow+weaken' : prep.fallback.script
+      const jobs = ok ? prep.combined : [prep.fallback]
+      const threadsOf = (script: string) =>
+        jobs
+          .filter((j) => j.script === script)
+          .reduce((sum, j) => sum + j.threads, 0)
+      const waitMs = launched > 0 ? prep.ms + FINISH_BUFFER_MS : IDLE_MS
+
+      ns.print(
+        `prep ${info.host}: ${what} (${launched > 0 ? 'launched' : 'no RAM'})`,
+      )
+      lane.phase = 'prepping'
+      lane.sizes = null
+      lane.prepThreads =
+        launched > 0
+          ? {
+              weaken: threadsOf('workers/weaken.js'),
+              grow: threadsOf('workers/grow.js'),
+            }
+          : null
+      lane.prepReadyAt = launched > 0 ? Date.now() + prep.ms : null
+      lane.message =
+        launched > 0 ? `prepping with ${what}` : 'prep waiting for RAM'
+      lane.wakeAt = Date.now() + waitMs
+      lane.busyUntil = lane.wakeAt
+
+      return
+    }
+  }
+
+  const batch = planBatch(ns, info, lane.launched)
+
+  const launch = await runAll(batch.jobs)
+  let { ok } = launch
+
+  if (ok && !landsInOrder(ns, info.host, batch)) {
+    // Durations moved under us (a level-up, or security off its floor), so
+    // the landings would be out of order and corrupt the target. Stop the
+    // whole batch before anything lands.
+    await killPids(launch.pids.flat())
+    ns.print(
+      `${info.host}: batch ${lane.launched} drifted out of order; killed`,
+    )
+    ok = false
+  }
+
+  if (ok) {
+    lane.launched++
+    lane.busyUntil = Date.now() + batch.durationMs + FINISH_BUFFER_MS
+    lane.landings.push(Date.now() + batch.durationMs)
+  }
+
+  lane.phase = ok ? 'batching' : 'waiting'
+  lane.sizes = batch.sizes
+  lane.prepThreads = null
+  lane.prepReadyAt = null
+  lane.message = ok
+    ? 'launching batches'
+    : 'batch skipped, waiting for the next slot'
+  lane.wakeAt = Date.now() + SPACING_MS
+}
 
 /** Logs why nothing is hackable, unless it's the same as last time. */
 async function reportNoTarget(ns: NS, last: string): Promise<string> {
@@ -227,22 +277,6 @@ async function reportNoTarget(ns: NS, last: string): Promise<string> {
   if (report !== last) ns.print(report)
 
   return report
-}
-
-/** Keeps `current` unless the best-ranked target beats it by SWITCH_RATIO. */
-function chooseTarget(
-  ranked: TargetInfo[],
-  current: string | null,
-): TargetInfo | null {
-  const best = ranked[0]
-
-  if (best === undefined) return null
-
-  const keep = ranked.find((t) => t.host === current)
-
-  return keep !== undefined && best.score < keep.score * SWITCH_RATIO
-    ? keep
-    : best
 }
 
 interface Batch {

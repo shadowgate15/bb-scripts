@@ -40,6 +40,13 @@ export interface BatchPlan {
   /** Batches that fit at once: limited by RAM and by how long a batch runs. */
   inFlight: number
   incomePerSec: number
+  /**
+   * Raw pool RAM this plan claims, headroom included, so subtracting it from
+   * the pool leaves what another target can be planned against.
+   */
+  ramUse: number
+  /** The part of `ramUse` that must come from home (pinned grow and weaken). */
+  homeUse: number
 }
 
 /** What a batch against `target` yields once it is at minimum security. */
@@ -150,19 +157,21 @@ export function batchRam(sizes: BatchSizes): number {
 
 /**
  * Picks the hack fraction that earns the most from `poolRam`, or says why none
- * works. Hack yield, hack chance and weaken time are all taken at the target's
+ * works. `homeRam` is the share of the pool on home that pinned batches may
+ * use; it defaults to all of home's usable RAM. Hack yield, hack chance and weaken time are all taken at the target's
  * minimum security, so an unprepped target isn't marked down for being unprepped
  * (that cost is charged separately as prep time).
  */
 export function chooseBatch(
   target: string,
   poolRam: number,
+  homeRam = getNs().getServerMaxRam('home') - HOME_RESERVED_RAM,
 ): BatchPlan | { reason: string } {
   const ns = getNs()
   const maxMoney = ns.getServerMaxMoney(target)
   const { hackPercent, hackChance, weakenMs } = preppedView(target)
   const usableRam = poolRam * POOL_USE
-  const homeRam = (ns.getServerMaxRam('home') - HOME_RESERVED_RAM) * POOL_USE
+  const usableHome = Math.max(0, homeRam) * POOL_USE
   const cores = homeCoreCount()
   // Unpinned (grow and weaken anywhere, sized for 1 core), and, if home has
   // spare cores, pinned to home (smaller batches, but only home's RAM for them).
@@ -181,7 +190,7 @@ export function chooseBatch(
         Math.floor(weakenMs / SPACING_MS),
         Math.floor(usableRam / ramPerBatch),
         homeCores > 1
-          ? Math.floor(homeRam / growWeakenRam(sizes))
+          ? Math.floor(usableHome / growWeakenRam(sizes))
           : Number.POSITIVE_INFINITY,
       )
 
@@ -201,6 +210,9 @@ export function chooseBatch(
           homeCores,
           inFlight,
           incomePerSec,
+          ramUse: (inFlight * ramPerBatch) / POOL_USE,
+          homeUse:
+            homeCores > 1 ? (inFlight * growWeakenRam(sizes)) / POOL_USE : 0,
         }
       }
     }

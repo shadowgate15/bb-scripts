@@ -1,4 +1,4 @@
-import { chooseBatch } from '@/lib/batch'
+import { type BatchPlan, chooseBatch } from '@/lib/batch'
 import { HOME_RESERVED_RAM } from '@/lib/constants/ram'
 import { entry } from '@/lib/entry'
 import { rootAll } from '@/lib/network/client'
@@ -18,12 +18,40 @@ const LEVEL_SHARE = 0.5
  * scores near zero, one that is already prepped keeps its full income.
  */
 const HORIZON_S = 900
+/** A kept target must be out-scored by this factor before it is replaced. */
+const SWITCH_RATIO = 1.5
+/** A target sharing the pool must earn at least this share of the best one's income. */
+const MIN_LANE_SHARE = 0.05
 
 /**
  * Ranks rooted servers by what they would earn us: batching income given the
  * RAM we have, discounted by how long they still need to be prepped.
  */
 export const main = entry(async (ns) => {
+  /** A target's ranking entry for `plan`, discounted by the prep it needs. */
+  const describe = (
+    host: string,
+    plan: BatchPlan,
+    ram: PrepRam,
+  ): TargetInfo => {
+    const prepMs = prepRounds(host, ram) * ns.getWeakenTime(host)
+
+    return {
+      host,
+      maxMoney: ns.getServerMaxMoney(host),
+      minSecurity: ns.getServerMinSecurityLevel(host),
+      prepMs,
+      incomePerSec: plan.incomePerSec,
+      fraction: plan.fraction,
+      homeCores: plan.homeCores,
+      sizes: plan.sizes,
+      inFlight: plan.inFlight,
+      ramUse: plan.ramUse,
+      homeUse: plan.homeUse,
+      score: (plan.incomePerSec * HORIZON_S) / (HORIZON_S + prepMs / 1000),
+    }
+  }
+
   /** Scores every rooted server, noting why each rejected one was skipped. */
   const evaluate = async (): Promise<
     TargetReport & { targets: TargetInfo[] }
@@ -62,22 +90,7 @@ export const main = entry(async (ns) => {
         continue
       }
 
-      const weakenMs = ns.getWeakenTime(host)
-      const { incomePerSec } = plan
-      const prepMs = prepRounds(host, ram) * weakenMs
-
-      targets.push({
-        host,
-        maxMoney,
-        minSecurity: ns.getServerMinSecurityLevel(host),
-        prepMs,
-        incomePerSec,
-        fraction: plan.fraction,
-        homeCores: plan.homeCores,
-        sizes: plan.sizes,
-        inFlight: plan.inFlight,
-        score: (incomePerSec * HORIZON_S) / (HORIZON_S + prepMs / 1000),
-      })
+      targets.push(describe(host, plan, ram))
     }
 
     targets.sort((a, b) => b.score - a.score)
@@ -96,12 +109,50 @@ export const main = entry(async (ns) => {
     }
   }
 
+  /**
+   * Fills the pool best target first. Each later target is planned against what
+   * the earlier ones leave, so a pool too big for one target spills onto the next.
+   */
+  const allocate = async (limit: number, keep: string[]) => {
+    const { targets } = await evaluate()
+    const ram = prepRamFor(await rootAll())
+    const biased = (t: TargetInfo) =>
+      t.score * (keep.includes(t.host) ? SWITCH_RATIO : 1)
+    const lanes: TargetInfo[] = []
+    let pool = ram.pool
+    let home = ram.home
+
+    for (const t of targets.toSorted((a, b) => biased(b) - biased(a))) {
+      if (lanes.length >= limit) break
+
+      // The first gets the whole pool, which is how it was already planned.
+      let next = t
+
+      if (lanes.length > 0) {
+        const plan = chooseBatch(t.host, pool, home)
+
+        if ('reason' in plan) continue
+
+        next = describe(t.host, plan, ram)
+
+        if (next.incomePerSec < lanes[0].incomePerSec * MIN_LANE_SHARE) continue
+      }
+
+      lanes.push(next)
+      pool -= next.ramUse
+      home -= next.homeUse
+    }
+
+    return lanes
+  }
+
   const rank = async () => (await evaluate()).targets
 
   await serve<TargetRpc>(
     targetChannel,
     {
       rank: async (params) => (await rank()).slice(0, params?.limit),
+      lanes: ({ limit, keep }) => allocate(limit, keep),
       explain: async () => {
         const { targets: _, ...report } = await evaluate()
 

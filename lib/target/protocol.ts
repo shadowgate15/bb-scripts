@@ -19,6 +19,9 @@ export interface TargetInfo {
   homeCores: number
   /** Batches that fit in flight at that fraction. */
   inFlight: number
+  /** Raw pool RAM that batch plan claims, and the part of it that is home's. */
+  ramUse: number
+  homeUse: number
   /** Ranking value: income per second discounted by the prep it needs first. */
   score: number
 }
@@ -39,6 +42,16 @@ export interface TargetReport {
 export interface TargetRpc extends RpcSchema {
   /** Hackable servers, best first. */
   rank: { params: { limit?: number } | undefined; result: TargetInfo[] }
+  /**
+   * Up to `limit` servers to hack at once, best first. Each is sized for the
+   * RAM left after the ones before it, so the plans fit the pool together.
+   * Servers in `keep` get SWITCH_RATIO's benefit of the doubt, so the set only
+   * changes for a clearly better one.
+   */
+  lanes: {
+    params: { limit: number; keep: string[] }
+    result: TargetInfo[]
+  }
   /** Why servers were left out of `rank`. */
   explain: { params: undefined; result: TargetReport }
   /**
