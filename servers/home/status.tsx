@@ -10,6 +10,13 @@ import {
   SHARER_STATUS_PORT,
   type SharerStatus,
 } from '@/lib/status/protocol'
+import {
+  installSwitcherKeys,
+  Prototype,
+  type PurchaserStub,
+  stubPurchaser,
+  variantIndex,
+} from '@/lib/status/purchaser-prototype' // PROTOTYPE
 import { carbonfox as c } from '@/lib/status/theme'
 import { rankTargets } from '@/lib/target/client'
 import type { TargetInfo } from '@/lib/target/protocol'
@@ -57,6 +64,7 @@ interface View {
   pool: Pool | null
   income: number
   candidates: TargetInfo[] | null
+  purchaser: PurchaserStub // PROTOTYPE
   fmt: NS['format']
 }
 
@@ -67,6 +75,7 @@ export const main = entry(async (ns) => {
   ns.ui.resizeTail(TAIL_WIDTH, TAIL_HEIGHT)
   ns.disableLog('ALL')
 
+  installSwitcherKeys() // PROTOTYPE
   let candidates: TargetInfo[] | null = null
 
   for (let tick = 0; ; tick++) {
@@ -87,6 +96,7 @@ export const main = entry(async (ns) => {
       pool: await readPool(ns),
       income: ns.getTotalScriptIncome()[0],
       candidates,
+      purchaser: stubPurchaser(ns.getTotalScriptIncome()[0]), // PROTOTYPE
       fmt: ns.format,
     }
 
@@ -96,7 +106,15 @@ export const main = entry(async (ns) => {
     // Dashboard would then trip the one-pending-ns-call rule. Everything below
     // Dashboard only gets plain strings.
     ns.printRaw(Dashboard(view))
-    await ns.sleep(REFRESH_MS)
+    // PROTOTYPE: wake early when the variant is flipped.
+    const shown = variantIndex()
+    for (
+      let waited = 0;
+      waited < REFRESH_MS && variantIndex() === shown;
+      waited += 100
+    ) {
+      await ns.sleep(100)
+    }
   }
 })
 
@@ -167,6 +185,7 @@ function Dashboard({
   pool,
   income,
   candidates,
+  purchaser,
   fmt,
 }: View) {
   const phase = offline
@@ -223,6 +242,8 @@ function Dashboard({
           />
         </div>
       </Panel>
+
+      {Prototype(purchaser, income, fmt) /* PROTOTYPE */}
 
       {lanes.map((l) => lanePanel(l, fmt))}
 
