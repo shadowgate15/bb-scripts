@@ -20,7 +20,7 @@ const REFRESH_MS = 1_000
  * hides the top rows under its title bar. Raise TAIL_HEIGHT if rows get cut.
  */
 const TAIL_WIDTH = 620
-const TAIL_HEIGHT = 780
+const TAIL_HEIGHT = 950
 /** The candidate table is costlier to build, so it refreshes less often. */
 const CANDIDATES_EVERY = 5
 /** A snapshot this long past when it should have updated means the batcher is gone. */
