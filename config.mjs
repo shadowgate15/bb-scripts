@@ -15,7 +15,9 @@ const createContext = async () =>
       BitburnerPlugin({
         port: 12525,
         types: 'NetscriptDefinitions.d.ts',
-        mirror: {},
+        mirror: {
+          mirror: ['home'],
+        },
         distribute: {},
       }),
     ],
