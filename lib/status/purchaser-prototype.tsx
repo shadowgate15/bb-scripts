@@ -1,12 +1,10 @@
 /**
  * PROTOTYPE — the "next buy" purchaser panel for the status screen's
  * purchaser tab. Data is STUBBED (simulated from income) until the purchaser
- * publishes a real status. Called directly from Dashboard so `fmt`
- * (ns.format) runs before React renders.
+ * publishes a real status.
  */
+import { fmt } from '@/lib/status/format'
 import { carbonfox as c } from '@/lib/status/theme'
-
-type Fmt = NS['format']
 
 export interface PurchaseStep {
   label: string
@@ -86,7 +84,7 @@ const Box = ({
 const dim = { color: c.comment, fontSize: 12 } as const
 
 /** A: one big bar toward the next purchase, with ETA and the last few buys. */
-export function nextBuy(p: PurchaserStub, income: number, fmt: Fmt) {
+export function NextBuy({ p, income }: { p: PurchaserStub; income: number }) {
   const next = p.queue[0]
   const share = Math.min(1, p.budget / next.cost)
   const missing = Math.max(0, next.cost - p.budget)

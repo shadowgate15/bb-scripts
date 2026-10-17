@@ -1,5 +1,6 @@
 import { entry } from '@/lib/entry'
 import { rootAll } from '@/lib/network/client'
+import { fmt } from '@/lib/status/format'
 import {
   BATCHER_STATUS_PORT,
   type BatcherPhase,
@@ -11,11 +12,12 @@ import {
   type SharerStatus,
 } from '@/lib/status/protocol'
 import {
-  nextBuy,
+  NextBuy,
   type PurchaserStub,
   stubPurchaser,
 } from '@/lib/status/purchaser-prototype' // PROTOTYPE data
-import { currentTab, installTabKeys, TabBar, tabIndex } from '@/lib/status/tabs'
+import { createStore, type Store } from '@/lib/status/store'
+import { TabBar, useTab } from '@/lib/status/tabs'
 import { carbonfox as c } from '@/lib/status/theme'
 import { rankTargets } from '@/lib/target/client'
 import type { TargetInfo } from '@/lib/target/protocol'
@@ -64,7 +66,6 @@ interface View {
   income: number
   candidates: TargetInfo[] | null
   purchaser: PurchaserStub // PROTOTYPE
-  fmt: NS['format']
 }
 
 /** Live status of the hacking services, in a tail window. */
@@ -74,7 +75,12 @@ export const main = entry(async (ns) => {
   ns.ui.resizeTail(TAIL_WIDTH, TAIL_HEIGHT)
   ns.disableLog('ALL')
 
-  installTabKeys()
+  // The dashboard mounts once and re-renders itself when a snapshot lands in
+  // the store; the loop below only gathers data, since rendering must not
+  // call `ns` while the loop is asleep.
+  const store = createStore<View | null>(null)
+  ns.printRaw(<Dashboard store={store} />)
+
   let candidates: TargetInfo[] | null = null
 
   for (let tick = 0; ; tick++) {
@@ -96,24 +102,10 @@ export const main = entry(async (ns) => {
       income: ns.getTotalScriptIncome()[0],
       candidates,
       purchaser: stubPurchaser(ns.getTotalScriptIncome()[0]), // PROTOTYPE
-      fmt: ns.format,
     }
 
-    ns.clearLog()
-    // Called as a function, not rendered as <Dashboard />: React renders later,
-    // while this script is inside `ns.sleep`, and the `ns.format` calls in
-    // Dashboard would then trip the one-pending-ns-call rule. Everything below
-    // Dashboard only gets plain strings.
-    ns.printRaw(Dashboard(view))
-    // Wake early when the tab is flipped.
-    const shown = tabIndex()
-    for (
-      let waited = 0;
-      waited < REFRESH_MS && tabIndex() === shown;
-      waited += 100
-    ) {
-      await ns.sleep(100)
-    }
+    store.set(view)
+    await ns.sleep(REFRESH_MS)
   }
 })
 
@@ -176,22 +168,32 @@ const PHASE: Record<BatcherPhase, { label: string; color: string }> = {
 const clamp01 = (n: number) =>
   Number.isFinite(n) ? Math.min(1, Math.max(0, n)) : 0
 
-function Dashboard({
-  status,
-  offline,
-  lanes,
-  sharer,
-  pool,
-  income,
-  candidates,
-  purchaser,
-  fmt,
-}: View) {
+function Dashboard({ store }: { store: Store<View | null> }) {
+  const view = React.useSyncExternalStore(store.subscribe, store.get)
+  const [tab, setTab] = useTab()
+
+  if (view === null) {
+    return (
+      <div style={{ background: c.bg1, minHeight: '100%', padding: 10 }}>
+        <Dim>loading…</Dim>
+      </div>
+    )
+  }
+
+  const {
+    status,
+    offline,
+    lanes,
+    sharer,
+    pool,
+    income,
+    candidates,
+    purchaser,
+  } = view
   const phase = offline
     ? { label: 'OFFLINE', color: c.red }
     : PHASE[status?.phase ?? 'searching']
 
-  const tab = currentTab()
   const hacked = new Set(lanes.map((l) => l.lane.target))
 
   return (
@@ -216,7 +218,7 @@ function Dashboard({
         <Pill label={phase.label} color={phase.color} />
       </div>
 
-      <TabBar />
+      <TabBar tab={tab} onChange={setTab} />
 
       {tab === 'overview' && (
         <>
@@ -251,19 +253,24 @@ function Dashboard({
             </div>
           </Panel>
 
-          {lanes.map((l) => lanePanel(l, fmt))}
+          {lanes.map((l) => (
+            <LanePanel key={l.lane.target} {...l} />
+          ))}
         </>
       )}
 
-      {tab === 'purchaser' && nextBuy(purchaser, income, fmt)}
+      {tab === 'purchaser' && <NextBuy p={purchaser} income={income} />}
 
       {tab === 'pool' && (
         <>
           <Panel title="pool">
             {pool ? (
               <>
-                {ramBar('home', pool.home, fmt)}
-                {ramBar(`${pool.others.hosts} servers`, pool.others, fmt)}
+                <RamBar label="home" use={pool.home} />
+                <RamBar
+                  label={`${pool.others.hosts} servers`}
+                  use={pool.others}
+                />
               </>
             ) : (
               <Dim>network service not responding</Dim>
@@ -339,12 +346,11 @@ function Dashboard({
   )
 }
 
-/** Called as a function, like Dashboard, so `fmt` runs before React renders. */
-function lanePanel({ lane, live }: LaneView, fmt: NS['format']) {
+function LanePanel({ lane, live }: LaneView) {
   const phase = PHASE[lane.phase]
 
   return (
-    <Panel key={lane.target}>
+    <Panel>
       <div style={{ display: 'flex', justifyContent: 'space-between' }}>
         <span style={{ color: c.blue, fontWeight: 'bold' }}>{lane.target}</span>
         <Pill label={phase.label} color={phase.color} />
@@ -468,8 +474,7 @@ function Panel({
   )
 }
 
-/** Called as a function, like Dashboard, so `fmt` runs before React renders. */
-function ramBar(label: string, use: RamUse, fmt: NS['format']) {
+function RamBar({ label, use }: { label: string; use: RamUse }) {
   const share = use.max > 0 ? use.used / use.max : 0
 
   return (

@@ -3,40 +3,37 @@ import { carbonfox as c } from '@/lib/status/theme'
 export const TABS = ['overview', 'purchaser', 'pool'] as const
 export type Tab = (typeof TABS)[number]
 
-let current = 0
-let listening = false
+/** Tab state, with ←/→ to flip between tabs. */
+export function useTab(): [Tab, (tab: Tab) => void] {
+  const [tab, setTab] = React.useState<Tab>('overview')
 
-export const tabIndex = () => current
+  React.useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const step = e.key === 'ArrowLeft' ? -1 : e.key === 'ArrowRight' ? 1 : 0
+      if (step === 0) return
+      setTab((t) => TABS[(TABS.indexOf(t) + step + TABS.length) % TABS.length])
+    }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [])
 
-const go = (to: number) => {
-  current = (to + TABS.length) % TABS.length
+  return [tab, setTab]
 }
 
-/** Arrow keys flip tabs; the status loop wakes early when `tabIndex()` changes. */
-export function installTabKeys() {
-  if (listening) return
-  listening = true
-  document.addEventListener('keydown', (e) => {
-    if (e.key === 'ArrowLeft') go(current - 1)
-    if (e.key === 'ArrowRight') go(current + 1)
-  })
-}
-
-export const currentTab = (): Tab => TABS[current]
-
-/**
- * Switches on mousedown, not click: the dashboard is re-printed every tick,
- * which replaces the buttons, so a press that straddles a refresh never
- * completes a click.
- */
-export function TabBar() {
+export function TabBar({
+  tab,
+  onChange,
+}: {
+  tab: Tab
+  onChange: (tab: Tab) => void
+}) {
   return (
     <div style={{ display: 'flex', gap: 4 }}>
-      {TABS.map((t, i) => (
+      {TABS.map((t) => (
         <button
           key={t}
           type="button"
-          onMouseDown={() => go(i)}
+          onClick={() => onChange(t)}
           style={{
             flex: 1,
             cursor: 'pointer',
@@ -46,8 +43,8 @@ export function TabBar() {
             padding: '4px 0',
             border: 'none',
             borderRadius: 4,
-            color: i === current ? c.bg0 : c.comment,
-            background: i === current ? c.blue : c.bg2,
+            color: t === tab ? c.bg0 : c.comment,
+            background: t === tab ? c.blue : c.bg2,
             fontWeight: 'bold',
           }}
         >
