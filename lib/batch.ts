@@ -42,29 +42,51 @@ export interface BatchPlan {
   incomePerSec: number
 }
 
-/**
- * How much more one hack steals (and how much likelier it is to succeed) at the
- * target's minimum security than at its current one, both scale with
- * (100 - security). 1 when the target is already prepped.
- */
-function preppedBoost(target: string): number {
-  const ns = getNs()
-  const current = ns.getServerSecurityLevel(target)
-  const min = ns.getServerMinSecurityLevel(target)
-
-  return current >= 100 ? 1 : (100 - min) / (100 - current)
+/** What a batch against `target` yields once it is at minimum security. */
+interface PreppedView {
+  /** Share of max money one hack thread steals. */
+  hackPercent: number
+  hackChance: number
+  weakenMs: number
 }
 
-/** Weaken time once the target is at minimum security, in ms. */
-function weakenMsWhenPrepped(target: string): number {
+/**
+ * Hack yield, hack chance and weaken time at the target's minimum security.
+ * With Formulas.exe these are exact (for a server at min security and max
+ * money). Without it they are scaled from the current readings: yield and
+ * chance both scale with (100 - security), weaken time with the game's
+ * `2.5 * required level * security + 500`.
+ */
+function preppedView(target: string): PreppedView {
   const ns = getNs()
+
+  if (ns.fileExists('Formulas.exe', 'home')) {
+    const server = ns.getServer(target)
+    const prepped = {
+      ...server,
+      hackDifficulty: server.minDifficulty,
+      moneyAvailable: server.moneyMax,
+    }
+    const player = ns.getPlayer()
+
+    return {
+      hackPercent: ns.formulas.hacking.hackPercent(prepped, player),
+      hackChance: ns.formulas.hacking.hackChance(prepped, player),
+      weakenMs: ns.formulas.hacking.weakenTime(prepped, player),
+    }
+  }
+
+  const current = ns.getServerSecurityLevel(target)
+  const min = ns.getServerMinSecurityLevel(target)
+  const boost = current >= 100 ? 1 : (100 - min) / (100 - current)
   const required = ns.getServerRequiredHackingLevel(target)
   const at = (security: number) => 2.5 * required * security + 500
 
-  return (
-    (ns.getWeakenTime(target) * at(ns.getServerMinSecurityLevel(target))) /
-    at(ns.getServerSecurityLevel(target))
-  )
+  return {
+    hackPercent: ns.hackAnalyze(target) * boost,
+    hackChance: Math.min(1, ns.hackAnalyzeChance(target) * boost),
+    weakenMs: (ns.getWeakenTime(target) * at(min)) / at(current),
+  }
 }
 
 /** Cores on home, which boost grow and weaken threads run there. */
@@ -81,13 +103,13 @@ export function sizeBatch(
   target: string,
   fraction: number,
   cores = 1,
+  stolenPerThread = preppedView(target).hackPercent,
 ): BatchSizes | null {
   const ns = getNs()
   // Sized from the share one thread steals, not `hackAnalyzeThreads`, which
   // returns -1 whenever the server holds less money than asked for (so for any
   // server that still needs growing).
-  // Judged at minimum security, which is where a batch actually runs.
-  const stolenPerThread = ns.hackAnalyze(target) * preppedBoost(target)
+  // `stolenPerThread` is judged at minimum security, where a batch runs.
   const hack = stolenPerThread > 0 ? Math.floor(fraction / stolenPerThread) : 0
 
   if (hack < 1) return null
@@ -138,11 +160,7 @@ export function chooseBatch(
 ): BatchPlan | { reason: string } {
   const ns = getNs()
   const maxMoney = ns.getServerMaxMoney(target)
-  const weakenMs = weakenMsWhenPrepped(target)
-  const hackChance = Math.min(
-    1,
-    ns.hackAnalyzeChance(target) * preppedBoost(target),
-  )
+  const { hackPercent, hackChance, weakenMs } = preppedView(target)
   const usableRam = poolRam * POOL_USE
   const homeRam = (ns.getServerMaxRam('home') - HOME_RESERVED_RAM) * POOL_USE
   const cores = homeCoreCount()
@@ -154,7 +172,7 @@ export function chooseBatch(
 
   for (const homeCores of coreOptions) {
     for (const fraction of FRACTIONS) {
-      const sizes = sizeBatch(target, fraction, homeCores)
+      const sizes = sizeBatch(target, fraction, homeCores, hackPercent)
 
       if (sizes === null) continue
 
