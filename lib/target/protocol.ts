@@ -53,10 +53,12 @@ export interface TargetRpc extends RpcSchema {
    * Up to `limit` servers to hack at once, best first. Each is sized for the
    * RAM left after the ones before it, so the plans fit the pool together.
    * Servers in `keep` get SWITCH_RATIO's benefit of the doubt, so the set only
-   * changes for a clearly better one.
+   * changes for a clearly better one. Servers in `steady` are being batched
+   * now: their money and security are off the floor mid-batch, which is normal,
+   * so they are not charged for prep.
    */
   lanes: {
-    params: { limit: number; keep: string[] }
+    params: { limit: number; keep: string[]; steady: string[] }
     result: { lanes: TargetInfo[]; skipped: SkippedTarget[] }
   }
   /** Why servers were left out of `rank`. */

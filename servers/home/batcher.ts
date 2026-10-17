@@ -32,6 +32,8 @@ const IDLE_MS = 5_000
 const RECHECK_MS = 60_000
 /** How often a status sample goes in the log. */
 const SAMPLE_MS = 30_000
+/** Actual income is averaged over this long. */
+const INCOME_WINDOW_MS = 30_000
 const LOG_FILE = 'logs/batcher.jsonl.txt'
 
 /** One target being prepped or batched, and what is in flight against it. */
@@ -78,6 +80,9 @@ export const main = entry(async (ns) => {
   let lanes: Lane[] = []
   let nextPlan = 0
   let nextSample = 0
+  let income = 0
+  /** Running hacking totals as read, newest last, spanning INCOME_WINDOW_MS. */
+  const earned: { t: number; total: number }[] = []
   let lastReport = ''
   let searchMessage = 'starting'
 
@@ -116,6 +121,7 @@ export const main = entry(async (ns) => {
         .filter((l) => !l.retired)
         .reduce((sum, l) => sum + l.info.ramUse, 0),
       // Only lanes past prep earn; the rest are still plans.
+      hackingIncomePerSec: income,
       estIncomePerSec: lanes
         .filter((l) => !l.retired && l.sizes !== null)
         .reduce((sum, l) => sum + l.info.incomePerSec, 0),
@@ -156,12 +162,28 @@ export const main = entry(async (ns) => {
         !(l.retired && now >= l.busyUntil && l.landings.every((t) => t <= now)),
     )
 
+    // getTotalScriptIncome only counts scripts still running, which one-shot
+    // hack workers never are; the game's running hacking total is exact.
+    earned.push({ t: now, total: ns.getMoneySources().sinceInstall.hacking })
+
+    while (earned.length > 2 && now - earned[1].t >= INCOME_WINDOW_MS) {
+      earned.shift()
+    }
+
+    const [first, last] = [earned[0], earned[earned.length - 1]]
+
+    income =
+      last.t > first.t
+        ? (last.total - first.total) / ((last.t - first.t) / 1000)
+        : 0
+
     const status = publish()
 
     if (now >= nextSample) {
       nextSample = now + SAMPLE_MS
       log('sample', {
-        income: ns.getTotalScriptIncome()[0],
+        income,
+        hackingTotal: last.total,
         expected: status.estIncomePerSec,
         plannedRam: status.plannedRam,
         lanes: lanes.map((l, i) => ({
@@ -191,10 +213,19 @@ let lastPlan = ''
  */
 async function replan(ns: NS, lanes: Lane[], log: Log): Promise<Lane[]> {
   const keep = lanes.filter((l) => !l.retired).map((l) => l.info.host)
-  const { lanes: wanted, skipped } = await allocateTargets(MAX_LANES, keep)
+  // Lanes past prep are mid-batch, so their readings are off the floor by design.
+  const steady = lanes
+    .filter((l) => !l.retired && l.sizes !== null)
+    .map((l) => l.info.host)
+  const { lanes: wanted, skipped } = await allocateTargets(
+    MAX_LANES,
+    keep,
+    steady,
+  )
 
   log('plan', {
     keep,
+    steady,
     wanted: wanted.map((t) => ({
       host: t.host,
       score: t.score,

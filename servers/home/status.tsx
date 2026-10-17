@@ -108,7 +108,7 @@ export const main = entry(async (ns) => {
         live: readTarget(ns, lane.target),
       })),
       pool: await readPool(ns),
-      income: ns.getTotalScriptIncome()[0],
+      income: status?.hackingIncomePerSec ?? 0,
       candidates,
       purchaser: readPurchaser(ns),
       cash: ns.getServerMoneyAvailable('home'),

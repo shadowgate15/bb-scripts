@@ -36,8 +36,10 @@ export const main = entry(async (ns) => {
     host: string,
     plan: BatchPlan,
     ram: PrepRam,
+    steady = false,
   ): TargetInfo => {
-    const prepMs = prepRounds(host, ram) * ns.getWeakenTime(host)
+    // A target being batched reads off its floor between batches; that is not prep.
+    const prepMs = steady ? 0 : prepRounds(host, ram) * ns.getWeakenTime(host)
 
     return {
       host,
@@ -56,9 +58,9 @@ export const main = entry(async (ns) => {
   }
 
   /** Scores every rooted server, noting why each rejected one was skipped. */
-  const evaluate = async (): Promise<
-    TargetReport & { targets: TargetInfo[] }
-  > => {
+  const evaluate = async (
+    steady: string[] = [],
+  ): Promise<TargetReport & { targets: TargetInfo[] }> => {
     const hosts = await rootAll()
     const ram = prepRamFor(hosts)
     const poolRam = ram.pool
@@ -93,7 +95,7 @@ export const main = entry(async (ns) => {
         continue
       }
 
-      targets.push(describe(host, plan, ram))
+      targets.push(describe(host, plan, ram, steady.includes(host)))
     }
 
     targets.sort((a, b) => b.score - a.score)
@@ -116,8 +118,8 @@ export const main = entry(async (ns) => {
    * Fills the pool best target first. Each later target is planned against what
    * the earlier ones leave, so a pool too big for one target spills onto the next.
    */
-  const allocate = async (limit: number, keep: string[]) => {
-    const { targets } = await evaluate()
+  const allocate = async (limit: number, keep: string[], steady: string[]) => {
+    const { targets } = await evaluate(steady)
     const ram = prepRamFor(await rootAll())
     const biased = (t: TargetInfo) =>
       t.score * (keep.includes(t.host) ? SWITCH_RATIO : 1)
@@ -150,7 +152,7 @@ export const main = entry(async (ns) => {
           continue
         }
 
-        next = describe(t.host, plan, ram)
+        next = describe(t.host, plan, ram, steady.includes(t.host))
 
         if (next.incomePerSec < lanes[0].incomePerSec * MIN_LANE_SHARE) {
           skip(
@@ -174,7 +176,7 @@ export const main = entry(async (ns) => {
     targetChannel,
     {
       rank: async (params) => (await rank()).slice(0, params?.limit),
-      lanes: ({ limit, keep }) => allocate(limit, keep),
+      lanes: ({ limit, keep, steady }) => allocate(limit, keep, steady),
       explain: async () => {
         const { targets: _, ...report } = await evaluate()
 

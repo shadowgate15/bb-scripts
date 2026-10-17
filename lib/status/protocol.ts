@@ -63,6 +63,8 @@ export interface BatcherStatus {
    * pool has beyond this is excess, free for sharing.
    */
   plannedRam: number
+  /** Hacking money actually earned, per second, over the last half minute. */
+  hackingIncomePerSec: number
   /** Totals across lanes. */
   estIncomePerSec: number
   batchesLaunched: number
