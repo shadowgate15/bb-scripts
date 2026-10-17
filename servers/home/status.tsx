@@ -1,15 +1,23 @@
 import { entry } from '@/lib/entry'
 import { rootAll } from '@/lib/network/client'
+import { createStatusContext } from '@/lib/status/context'
+import { fmt } from '@/lib/status/format'
 import {
   BATCHER_STATUS_PORT,
   type BatcherPhase,
   type BatcherStatus,
   isBatcherStatus,
+  isPurchaserStatus,
   isSharerStatus,
   type LaneStatus,
+  PURCHASER_STATUS_PORT,
+  type PurchaserStatus,
   SHARER_STATUS_PORT,
   type SharerStatus,
 } from '@/lib/status/protocol'
+import { PurchaserPanel } from '@/lib/status/purchaser-panel'
+import { createStore } from '@/lib/status/store'
+import { TabBar, useTab } from '@/lib/status/tabs'
 import { carbonfox as c } from '@/lib/status/theme'
 import { rankTargets } from '@/lib/target/client'
 import type { TargetInfo } from '@/lib/target/protocol'
@@ -57,8 +65,13 @@ interface View {
   pool: Pool | null
   income: number
   candidates: TargetInfo[] | null
-  fmt: NS['format']
+  purchaser: PurchaserStatus | null
+  /** Cash on hand, live, so purchase progress moves between purchaser ticks. */
+  cash: number
 }
+
+const { Provider: StatusProvider, useValue: useView } =
+  createStatusContext<View>()
 
 /** Live status of the hacking services, in a tail window. */
 export const main = entry(async (ns) => {
@@ -66,6 +79,16 @@ export const main = entry(async (ns) => {
   ns.ui.setTailTitle('hacking status')
   ns.ui.resizeTail(TAIL_WIDTH, TAIL_HEIGHT)
   ns.disableLog('ALL')
+
+  // The dashboard mounts once and re-renders itself when a snapshot lands in
+  // the store; the loop below only gathers data, since rendering must not
+  // call `ns` while the loop is asleep.
+  const store = createStore<View | null>(null)
+  ns.printRaw(
+    <StatusProvider store={store}>
+      <Dashboard />
+    </StatusProvider>,
+  )
 
   let candidates: TargetInfo[] | null = null
 
@@ -87,15 +110,11 @@ export const main = entry(async (ns) => {
       pool: await readPool(ns),
       income: ns.getTotalScriptIncome()[0],
       candidates,
-      fmt: ns.format,
+      purchaser: readPurchaser(ns),
+      cash: ns.getServerMoneyAvailable('home'),
     }
 
-    ns.clearLog()
-    // Called as a function, not rendered as <Dashboard />: React renders later,
-    // while this script is inside `ns.sleep`, and the `ns.format` calls in
-    // Dashboard would then trip the one-pending-ns-call rule. Everything below
-    // Dashboard only gets plain strings.
-    ns.printRaw(Dashboard(view))
+    store.set(view)
     await ns.sleep(REFRESH_MS)
   }
 })
@@ -116,6 +135,16 @@ function readSharer(ns: NS): SharerStatus | null {
   const value = ns.getPortHandle(SHARER_STATUS_PORT).peek()
 
   return isSharerStatus(value) && Date.now() - value.updatedAt < STALE_MS
+    ? value
+    : null
+}
+
+/** The purchaser's snapshot; kept once it is done, since it then exits. */
+function readPurchaser(ns: NS): PurchaserStatus | null {
+  const value = ns.getPortHandle(PURCHASER_STATUS_PORT).peek()
+
+  return isPurchaserStatus(value) &&
+    (value.done || Date.now() - value.updatedAt < STALE_MS)
     ? value
     : null
 }
@@ -159,16 +188,29 @@ const PHASE: Record<BatcherPhase, { label: string; color: string }> = {
 const clamp01 = (n: number) =>
   Number.isFinite(n) ? Math.min(1, Math.max(0, n)) : 0
 
-function Dashboard({
-  status,
-  offline,
-  lanes,
-  sharer,
-  pool,
-  income,
-  candidates,
-  fmt,
-}: View) {
+function Dashboard() {
+  const view = useView()
+  const [tab, setTab] = useTab()
+
+  if (view === null) {
+    return (
+      <div style={{ background: c.bg1, minHeight: '100%', padding: 10 }}>
+        <Dim>loading…</Dim>
+      </div>
+    )
+  }
+
+  const {
+    status,
+    offline,
+    lanes,
+    sharer,
+    pool,
+    income,
+    candidates,
+    purchaser,
+    cash,
+  } = view
   const phase = offline
     ? { label: 'OFFLINE', color: c.red }
     : PHASE[status?.phase ?? 'searching']
@@ -197,105 +239,133 @@ function Dashboard({
         <Pill label={phase.label} color={phase.color} />
       </div>
 
-      <Panel>
-        <div
-          style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}
-        >
-          <Stat
-            label="income"
-            value={`$${fmt.number(income, 2)}/s`}
-            color={c.green}
-          />
-          <Stat
-            label="expected"
-            value={`$${fmt.number(status?.estIncomePerSec ?? 0, 2)}/s`}
-            color={c.teal}
-          />
-          <Stat
-            label="in flight"
-            value={String(status?.inFlight ?? 0)}
-            color={c.cyan}
-          />
-          <Stat
-            label="launched"
-            value={fmt.number(status?.batchesLaunched ?? 0, 1)}
-            color={c.magenta}
-          />
-        </div>
-      </Panel>
+      <TabBar tab={tab} onChange={setTab} />
 
-      {lanes.map((l) => lanePanel(l, fmt))}
+      {tab === 'overview' && (
+        <>
+          <Panel>
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: '1fr 1fr',
+                gap: 10,
+              }}
+            >
+              <Stat
+                label="income"
+                value={`$${fmt.number(income, 2)}/s`}
+                color={c.green}
+              />
+              <Stat
+                label="expected"
+                value={`$${fmt.number(status?.estIncomePerSec ?? 0, 2)}/s`}
+                color={c.teal}
+              />
+              <Stat
+                label="in flight"
+                value={String(status?.inFlight ?? 0)}
+                color={c.cyan}
+              />
+              <Stat
+                label="launched"
+                value={fmt.number(status?.batchesLaunched ?? 0, 1)}
+                color={c.magenta}
+              />
+            </div>
+          </Panel>
 
-      <Panel title="pool">
-        {pool ? (
-          <>
-            {ramBar('home', pool.home, fmt)}
-            {ramBar(`${pool.others.hosts} servers`, pool.others, fmt)}
-          </>
-        ) : (
-          <Dim>network service not responding</Dim>
-        )}
-      </Panel>
-
-      {sharer && (
-        <Panel title="share">
-          <div style={{ display: 'flex', gap: 14 }}>
-            <Stat
-              label="threads"
-              value={fmt.number(sharer.threads, 0)}
-              color={c.magenta}
-              small
-            />
-            <Stat
-              label="power"
-              value={`x${sharer.power.toFixed(3)}`}
-              color={c.cyan}
-              small
-            />
-          </div>
-          <Dim>{sharer.message}</Dim>
-        </Panel>
+          {lanes.map((l) => (
+            <LanePanel key={l.lane.target} {...l} />
+          ))}
+        </>
       )}
 
-      <Panel title="candidates">
-        {candidates === null ? (
-          <Dim>target service not responding</Dim>
-        ) : candidates.length === 0 ? (
-          <Dim>nothing hackable yet</Dim>
-        ) : (
-          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-            <thead>
-              <tr style={{ color: c.comment, textAlign: 'right' }}>
-                <th style={{ textAlign: 'left', fontWeight: 'normal' }}>
-                  server
-                </th>
-                <th style={{ fontWeight: 'normal' }}>$/s</th>
-                <th style={{ fontWeight: 'normal' }}>prep</th>
-                <th style={{ fontWeight: 'normal' }}>hack</th>
-              </tr>
-            </thead>
-            <tbody>
-              {candidates.map((t) => (
-                <tr
-                  key={t.host}
-                  style={{
-                    textAlign: 'right',
-                    color: hacked.has(t.host) ? c.blue : c.fg,
-                  }}
-                >
-                  <td style={{ textAlign: 'left' }}>
-                    {hacked.has(t.host) ? '● ' : ''}
-                    {t.host}
-                  </td>
-                  <td>${fmt.number(t.incomePerSec, 1)}</td>
-                  <td>{t.prepMs > 0 ? fmt.time(t.prepMs) : 'ready'}</td>
-                  <td>{fmt.percent(t.fraction, 0)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </Panel>
+      {tab === 'purchaser' && (
+        <PurchaserPanel
+          status={purchaser}
+          cash={cash}
+          income={income}
+          now={Date.now()}
+        />
+      )}
+
+      {tab === 'pool' && (
+        <>
+          <Panel title="pool">
+            {pool ? (
+              <>
+                <RamBar label="home" use={pool.home} />
+                <RamBar
+                  label={`${pool.others.hosts} servers`}
+                  use={pool.others}
+                />
+              </>
+            ) : (
+              <Dim>network service not responding</Dim>
+            )}
+          </Panel>
+
+          {sharer && (
+            <Panel title="share">
+              <div style={{ display: 'flex', gap: 14 }}>
+                <Stat
+                  label="threads"
+                  value={fmt.number(sharer.threads, 0)}
+                  color={c.magenta}
+                  small
+                />
+                <Stat
+                  label="power"
+                  value={`x${sharer.power.toFixed(3)}`}
+                  color={c.cyan}
+                  small
+                />
+              </div>
+              <Dim>{sharer.message}</Dim>
+            </Panel>
+          )}
+
+          <Panel title="candidates">
+            {candidates === null ? (
+              <Dim>target service not responding</Dim>
+            ) : candidates.length === 0 ? (
+              <Dim>nothing hackable yet</Dim>
+            ) : (
+              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                <thead>
+                  <tr style={{ color: c.comment, textAlign: 'right' }}>
+                    <th style={{ textAlign: 'left', fontWeight: 'normal' }}>
+                      server
+                    </th>
+                    <th style={{ fontWeight: 'normal' }}>$/s</th>
+                    <th style={{ fontWeight: 'normal' }}>prep</th>
+                    <th style={{ fontWeight: 'normal' }}>hack</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {candidates.map((t) => (
+                    <tr
+                      key={t.host}
+                      style={{
+                        textAlign: 'right',
+                        color: hacked.has(t.host) ? c.blue : c.fg,
+                      }}
+                    >
+                      <td style={{ textAlign: 'left' }}>
+                        {hacked.has(t.host) ? '● ' : ''}
+                        {t.host}
+                      </td>
+                      <td>${fmt.number(t.incomePerSec, 1)}</td>
+                      <td>{t.prepMs > 0 ? fmt.time(t.prepMs) : 'ready'}</td>
+                      <td>{fmt.percent(t.fraction, 0)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </Panel>
+        </>
+      )}
 
       <Dim>
         {offline ? 'no recent update from the batcher' : status?.message}
@@ -304,12 +374,11 @@ function Dashboard({
   )
 }
 
-/** Called as a function, like Dashboard, so `fmt` runs before React renders. */
-function lanePanel({ lane, live }: LaneView, fmt: NS['format']) {
+function LanePanel({ lane, live }: LaneView) {
   const phase = PHASE[lane.phase]
 
   return (
-    <Panel key={lane.target}>
+    <Panel>
       <div style={{ display: 'flex', justifyContent: 'space-between' }}>
         <span style={{ color: c.blue, fontWeight: 'bold' }}>{lane.target}</span>
         <Pill label={phase.label} color={phase.color} />
@@ -433,8 +502,7 @@ function Panel({
   )
 }
 
-/** Called as a function, like Dashboard, so `fmt` runs before React renders. */
-function ramBar(label: string, use: RamUse, fmt: NS['format']) {
+function RamBar({ label, use }: { label: string; use: RamUse }) {
   const share = use.max > 0 ? use.used / use.max : 0
 
   return (

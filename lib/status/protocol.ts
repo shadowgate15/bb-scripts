@@ -1,4 +1,5 @@
 import type { BatchSizes } from '../batch'
+import type { Purchase } from '../purchaser/plan'
 
 /**
  * Port the batcher keeps its latest snapshot on (clear + write). Readers
@@ -11,6 +12,9 @@ export const BATCHER_STATUS_PORT = 100
  * batcher's.
  */
 export const SHARER_STATUS_PORT = 101
+
+/** Port the purchaser keeps its latest snapshot on, read like the others. */
+export const PURCHASER_STATUS_PORT = 102
 
 export type BatcherPhase =
   /** No target worth hacking yet. */
@@ -73,6 +77,33 @@ export function isBatcherStatus(value: unknown): value is BatcherStatus {
     typeof (value as BatcherStatus).updatedAt === 'number' &&
     typeof (value as BatcherStatus).phase === 'string' &&
     Array.isArray((value as BatcherStatus).lanes)
+  )
+}
+
+/** What the purchaser has bought, or is saving for. */
+export interface PurchaserStatus {
+  updatedAt: number
+  /** True once there is nothing left to buy; the purchaser has exited. */
+  done: boolean
+  /** What it is saving for, ignoring the budget; null if nothing to buy. */
+  next: Purchase | null
+  /** RAM of each cloud server we own, in GB. */
+  cloudRams: number[]
+  cloudLimit: number
+  cloudRamLimit: number
+  /** Null when home upgrades are unavailable. */
+  home: { ram: number; cores: number } | null
+  /** Most recent purchases, newest first. */
+  recent: { at: number; purchase: Purchase }[]
+}
+
+export function isPurchaserStatus(value: unknown): value is PurchaserStatus {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    typeof (value as PurchaserStatus).updatedAt === 'number' &&
+    typeof (value as PurchaserStatus).done === 'boolean' &&
+    Array.isArray((value as PurchaserStatus).cloudRams)
   )
 }
 

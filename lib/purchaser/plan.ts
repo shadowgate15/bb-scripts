@@ -1,3 +1,5 @@
+/** Share of current cash a single purchase may use. */
+export const SPEND_FRACTION = 0.5
 /** Smallest cloud server worth buying, in GB. */
 export const MIN_CLOUD_RAM = 8
 /**
@@ -145,6 +147,65 @@ export function nextPurchase(state: PurchaseState): Purchase | null {
   }
 
   if (state.home !== null && state.home.coreCost <= state.budget) {
+    const worthGb =
+      (state.home.ram * GROW_WEAKEN_SHARE) / (15 + state.home.cores)
+
+    candidates.push({
+      purchase: { kind: 'cores', cost: state.home.coreCost },
+      perGb: state.home.coreCost / worthGb / HOME_PREFERENCE,
+    })
+  }
+
+  candidates.sort((a, b) => a.perGb - b.perGb)
+
+  return candidates[0]?.purchase ?? null
+}
+
+/**
+ * What the purchaser is saving for: the best-value purchase at its smallest
+ * step (a minimum-size cloud server, doubling the smallest one, one home RAM
+ * upgrade, one core), ignoring the budget. Null when nothing is left to buy.
+ * `nextPurchase` may buy a bigger cloud step once cash allows.
+ */
+export function nextTarget(state: PurchaseState): Purchase | null {
+  const candidates: Candidate[] = []
+
+  if (state.servers.length < state.serverLimit) {
+    const cost = state.cloudCost(MIN_CLOUD_RAM)
+
+    if (cost >= 0 && Number.isFinite(cost)) {
+      candidates.push({
+        purchase: { kind: 'buy', ram: MIN_CLOUD_RAM, cost },
+        perGb: cost / MIN_CLOUD_RAM,
+      })
+    }
+  } else {
+    const smallest = state.servers.reduce<CloudServer | null>(
+      (min, s) => (min === null || s.ram < min.ram ? s : min),
+      null,
+    )
+
+    if (smallest !== null && smallest.ram < state.ramLimit) {
+      const ram = Math.min(smallest.ram * 2, state.ramLimit)
+      const cost = state.upgradeCost(smallest.host, ram)
+
+      if (cost >= 0 && Number.isFinite(cost)) {
+        candidates.push({
+          purchase: { kind: 'upgrade', host: smallest.host, ram, cost },
+          perGb: cost / (ram - smallest.ram),
+        })
+      }
+    }
+  }
+
+  if (state.home !== null && Number.isFinite(state.home.ramCost)) {
+    candidates.push({
+      purchase: { kind: 'home', cost: state.home.ramCost },
+      perGb: state.home.ramCost / state.home.ram / HOME_PREFERENCE,
+    })
+  }
+
+  if (state.home !== null && Number.isFinite(state.home.coreCost)) {
     const worthGb =
       (state.home.ram * GROW_WEAKEN_SHARE) / (15 + state.home.cores)
 
