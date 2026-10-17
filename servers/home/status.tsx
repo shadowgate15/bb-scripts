@@ -29,6 +29,8 @@ const REFRESH_MS = 1_000
  */
 const TAIL_WIDTH = 620
 const TAIL_HEIGHT = 950
+/** The tail window's title bar, which the content height must leave room for. */
+const TITLE_BAR = 34
 /** The candidate table is costlier to build, so it refreshes less often. */
 const CANDIDATES_EVERY = 5
 /** A snapshot this long past when it should have updated means the batcher is gone. */
@@ -226,7 +228,9 @@ function Dashboard() {
         display: 'flex',
         flexDirection: 'column',
         gap: 8,
-        minHeight: '100%',
+        width: TAIL_WIDTH,
+        height: TAIL_HEIGHT - TITLE_BAR,
+        overflow: 'hidden',
         boxSizing: 'border-box',
       }}
     >
@@ -241,131 +245,142 @@ function Dashboard() {
 
       <TabBar tab={tab} onChange={setTab} />
 
-      {tab === 'overview' && (
-        <>
-          <Panel>
-            <div
-              style={{
-                display: 'grid',
-                gridTemplateColumns: '1fr 1fr',
-                gap: 10,
-              }}
-            >
-              <Stat
-                label="income"
-                value={`$${fmt.number(income, 2)}/s`}
-                color={c.green}
-              />
-              <Stat
-                label="expected"
-                value={`$${fmt.number(status?.estIncomePerSec ?? 0, 2)}/s`}
-                color={c.teal}
-              />
-              <Stat
-                label="in flight"
-                value={String(status?.inFlight ?? 0)}
-                color={c.cyan}
-              />
-              <Stat
-                label="launched"
-                value={fmt.number(status?.batchesLaunched ?? 0, 1)}
-                color={c.magenta}
-              />
-            </div>
-          </Panel>
-
-          {lanes.map((l) => (
-            <LanePanel key={l.lane.target} {...l} />
-          ))}
-        </>
-      )}
-
-      {tab === 'purchaser' && (
-        <PurchaserPanel
-          status={purchaser}
-          cash={cash}
-          income={income}
-          now={Date.now()}
-        />
-      )}
-
-      {tab === 'pool' && (
-        <>
-          <Panel title="pool">
-            {pool ? (
-              <>
-                <RamBar label="home" use={pool.home} />
-                <RamBar
-                  label={`${pool.others.hosts} servers`}
-                  use={pool.others}
-                />
-              </>
-            ) : (
-              <Dim>network service not responding</Dim>
-            )}
-          </Panel>
-
-          {sharer && (
-            <Panel title="share">
-              <div style={{ display: 'flex', gap: 14 }}>
+      <div
+        style={{
+          flex: 1,
+          minHeight: 0,
+          overflowY: 'auto',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 8,
+        }}
+      >
+        {tab === 'overview' && (
+          <>
+            <Panel>
+              <div
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: '1fr 1fr',
+                  gap: 10,
+                }}
+              >
                 <Stat
-                  label="threads"
-                  value={fmt.number(sharer.threads, 0)}
-                  color={c.magenta}
-                  small
+                  label="income"
+                  value={`$${fmt.number(income, 2)}/s`}
+                  color={c.green}
                 />
                 <Stat
-                  label="power"
-                  value={`x${sharer.power.toFixed(3)}`}
+                  label="expected"
+                  value={`$${fmt.number(status?.estIncomePerSec ?? 0, 2)}/s`}
+                  color={c.teal}
+                />
+                <Stat
+                  label="in flight"
+                  value={String(status?.inFlight ?? 0)}
                   color={c.cyan}
-                  small
+                />
+                <Stat
+                  label="launched"
+                  value={fmt.number(status?.batchesLaunched ?? 0, 1)}
+                  color={c.magenta}
                 />
               </div>
-              <Dim>{sharer.message}</Dim>
             </Panel>
-          )}
 
-          <Panel title="candidates">
-            {candidates === null ? (
-              <Dim>target service not responding</Dim>
-            ) : candidates.length === 0 ? (
-              <Dim>nothing hackable yet</Dim>
-            ) : (
-              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                <thead>
-                  <tr style={{ color: c.comment, textAlign: 'right' }}>
-                    <th style={{ textAlign: 'left', fontWeight: 'normal' }}>
-                      server
-                    </th>
-                    <th style={{ fontWeight: 'normal' }}>$/s</th>
-                    <th style={{ fontWeight: 'normal' }}>prep</th>
-                    <th style={{ fontWeight: 'normal' }}>hack</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {candidates.map((t) => (
-                    <tr
-                      key={t.host}
-                      style={{
-                        textAlign: 'right',
-                        color: hacked.has(t.host) ? c.blue : c.fg,
-                      }}
-                    >
-                      <td style={{ textAlign: 'left' }}>
-                        {hacked.has(t.host) ? '● ' : ''}
-                        {t.host}
-                      </td>
-                      <td>${fmt.number(t.incomePerSec, 1)}</td>
-                      <td>{t.prepMs > 0 ? fmt.time(t.prepMs) : 'ready'}</td>
-                      <td>{fmt.percent(t.fraction, 0)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+            {lanes.map((l) => (
+              <LanePanel key={l.lane.target} {...l} />
+            ))}
+          </>
+        )}
+
+        {tab === 'purchaser' && (
+          <PurchaserPanel
+            status={purchaser}
+            cash={cash}
+            income={income}
+            now={Date.now()}
+          />
+        )}
+
+        {tab === 'pool' && (
+          <>
+            <Panel title="pool">
+              {pool ? (
+                <>
+                  <RamBar label="home" use={pool.home} />
+                  <RamBar
+                    label={`${pool.others.hosts} servers`}
+                    use={pool.others}
+                  />
+                </>
+              ) : (
+                <Dim>network service not responding</Dim>
+              )}
+            </Panel>
+
+            {sharer && (
+              <Panel title="share">
+                <div style={{ display: 'flex', gap: 14 }}>
+                  <Stat
+                    label="threads"
+                    value={fmt.number(sharer.threads, 0)}
+                    color={c.magenta}
+                    small
+                  />
+                  <Stat
+                    label="power"
+                    value={`x${sharer.power.toFixed(3)}`}
+                    color={c.cyan}
+                    small
+                  />
+                </div>
+                <Dim>{sharer.message}</Dim>
+              </Panel>
             )}
-          </Panel>
-        </>
-      )}
+
+            <Panel title="candidates">
+              {candidates === null ? (
+                <Dim>target service not responding</Dim>
+              ) : candidates.length === 0 ? (
+                <Dim>nothing hackable yet</Dim>
+              ) : (
+                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                  <thead>
+                    <tr style={{ color: c.comment, textAlign: 'right' }}>
+                      <th style={{ textAlign: 'left', fontWeight: 'normal' }}>
+                        server
+                      </th>
+                      <th style={{ fontWeight: 'normal' }}>$/s</th>
+                      <th style={{ fontWeight: 'normal' }}>prep</th>
+                      <th style={{ fontWeight: 'normal' }}>hack</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {candidates.map((t) => (
+                      <tr
+                        key={t.host}
+                        style={{
+                          textAlign: 'right',
+                          color: hacked.has(t.host) ? c.blue : c.fg,
+                        }}
+                      >
+                        <td style={{ textAlign: 'left' }}>
+                          {hacked.has(t.host) ? '● ' : ''}
+                          {t.host}
+                        </td>
+                        <td>${fmt.number(t.incomePerSec, 1)}</td>
+                        <td>{t.prepMs > 0 ? fmt.time(t.prepMs) : 'ready'}</td>
+                        <td>{fmt.percent(t.fraction, 0)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </Panel>
+          </>
+        )}
+      </div>
 
       <Dim>
         {offline ? 'no recent update from the batcher' : status?.message}
