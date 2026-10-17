@@ -5,7 +5,10 @@ import {
   type BatcherPhase,
   type BatcherStatus,
   isBatcherStatus,
+  isSharerStatus,
   type LaneStatus,
+  SHARER_STATUS_PORT,
+  type SharerStatus,
 } from '@/lib/status/protocol'
 import { carbonfox as c } from '@/lib/status/theme'
 import { rankTargets } from '@/lib/target/client'
@@ -50,6 +53,7 @@ interface View {
   status: BatcherStatus | null
   offline: boolean
   lanes: LaneView[]
+  sharer: SharerStatus | null
   pool: Pool | null
   income: number
   candidates: TargetInfo[] | null
@@ -75,6 +79,7 @@ export const main = entry(async (ns) => {
     const view: View = {
       status,
       offline: status === null || Date.now() > staleAfter(status),
+      sharer: readSharer(ns),
       lanes: (status?.lanes ?? []).map((lane) => ({
         lane,
         live: readTarget(ns, lane.target),
@@ -104,6 +109,15 @@ function readStatus(ns: NS): BatcherStatus | null {
   const value = ns.getPortHandle(BATCHER_STATUS_PORT).peek()
 
   return isBatcherStatus(value) ? value : null
+}
+
+/** The sharer's snapshot, or null if it is missing or has stopped updating. */
+function readSharer(ns: NS): SharerStatus | null {
+  const value = ns.getPortHandle(SHARER_STATUS_PORT).peek()
+
+  return isSharerStatus(value) && Date.now() - value.updatedAt < STALE_MS
+    ? value
+    : null
 }
 
 function readTarget(ns: NS, host: string): TargetLive {
@@ -149,6 +163,7 @@ function Dashboard({
   status,
   offline,
   lanes,
+  sharer,
   pool,
   income,
   candidates,
@@ -221,6 +236,26 @@ function Dashboard({
           <Dim>network service not responding</Dim>
         )}
       </Panel>
+
+      {sharer && (
+        <Panel title="share">
+          <div style={{ display: 'flex', gap: 14 }}>
+            <Stat
+              label="threads"
+              value={fmt.number(sharer.threads, 0)}
+              color={c.magenta}
+              small
+            />
+            <Stat
+              label="power"
+              value={`x${sharer.power.toFixed(3)}`}
+              color={c.cyan}
+              small
+            />
+          </div>
+          <Dim>{sharer.message}</Dim>
+        </Panel>
+      )}
 
       <Panel title="candidates">
         {candidates === null ? (

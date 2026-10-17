@@ -100,6 +100,9 @@ export const main = entry(async (ns) => {
       updatedAt: now,
       phase,
       lanes: statuses,
+      plannedRam: lanes
+        .filter((l) => !l.retired)
+        .reduce((sum, l) => sum + l.info.ramUse, 0),
       estIncomePerSec: lanes
         .filter((l) => !l.retired)
         .reduce((sum, l) => sum + l.info.incomePerSec, 0),

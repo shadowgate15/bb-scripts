@@ -6,6 +6,12 @@ import type { BatchSizes } from '../batch'
  */
 export const BATCHER_STATUS_PORT = 100
 
+/**
+ * Port the sharer keeps its latest snapshot on, read the same way as the
+ * batcher's.
+ */
+export const SHARER_STATUS_PORT = 101
+
 export type BatcherPhase =
   /** No target worth hacking yet. */
   | 'searching'
@@ -48,6 +54,11 @@ export interface BatcherStatus {
   phase: BatcherPhase
   /** Targets hacked at once, best first. */
   lanes: LaneStatus[]
+  /**
+   * Raw pool RAM the lanes' batch plans claim, headroom included. Whatever the
+   * pool has beyond this is excess, free for sharing.
+   */
+  plannedRam: number
   /** Totals across lanes. */
   estIncomePerSec: number
   batchesLaunched: number
@@ -62,5 +73,24 @@ export function isBatcherStatus(value: unknown): value is BatcherStatus {
     typeof (value as BatcherStatus).updatedAt === 'number' &&
     typeof (value as BatcherStatus).phase === 'string' &&
     Array.isArray((value as BatcherStatus).lanes)
+  )
+}
+
+/** What the sharer is doing right now. */
+export interface SharerStatus {
+  updatedAt: number
+  /** Share threads running now. */
+  threads: number
+  /** Game's share power with them, as a multiplier on reputation gain. */
+  power: number
+  message: string
+}
+
+export function isSharerStatus(value: unknown): value is SharerStatus {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    typeof (value as SharerStatus).updatedAt === 'number' &&
+    typeof (value as SharerStatus).threads === 'number'
   )
 }
