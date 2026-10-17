@@ -24,6 +24,11 @@ export function installTabKeys() {
 
 export const currentTab = (): Tab => TABS[current]
 
+/**
+ * Switches on mousedown, not click: the dashboard is re-printed every tick,
+ * which replaces the buttons, so a press that straddles a refresh never
+ * completes a click.
+ */
 export function TabBar() {
   return (
     <div style={{ display: 'flex', gap: 4 }}>
@@ -31,7 +36,7 @@ export function TabBar() {
         <button
           key={t}
           type="button"
-          onClick={() => go(i)}
+          onMouseDown={() => go(i)}
           style={{
             flex: 1,
             cursor: 'pointer',
