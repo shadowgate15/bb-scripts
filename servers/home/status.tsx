@@ -76,7 +76,7 @@ const { Provider: StatusProvider, useValue: useView } =
 /** Live status of the hacking services, in a tail window. */
 export const main = entry(async (ns) => {
   ns.ui.openTail()
-  ns.ui.setTailTitle('hacking status')
+  ns.ui.setTailTitle('status')
   ns.ui.resizeTail(TAIL_WIDTH, TAIL_HEIGHT)
   ns.disableLog('ALL')
 
