@@ -103,8 +103,9 @@ export const main = entry(async (ns) => {
       plannedRam: lanes
         .filter((l) => !l.retired)
         .reduce((sum, l) => sum + l.info.ramUse, 0),
+      // Only lanes past prep earn; the rest are still plans.
       estIncomePerSec: lanes
-        .filter((l) => !l.retired)
+        .filter((l) => !l.retired && l.sizes !== null)
         .reduce((sum, l) => sum + l.info.incomePerSec, 0),
       batchesLaunched: statuses.reduce((sum, s) => sum + s.batchesLaunched, 0),
       inFlight: statuses.reduce((sum, s) => sum + s.inFlight, 0),
@@ -145,6 +146,9 @@ export const main = entry(async (ns) => {
   }
 })
 
+/** The last plan logged, so an unchanged plan isn't logged again. */
+let lastPlan = ''
+
 /**
  * Applies the target service's plan to the running lanes: keeps and refreshes
  * the ones it still wants, retires the rest, and adds lanes for new targets.
@@ -152,6 +156,17 @@ export const main = entry(async (ns) => {
 async function replan(ns: NS, lanes: Lane[]): Promise<Lane[]> {
   const keep = lanes.filter((l) => !l.retired).map((l) => l.info.host)
   const wanted = await allocateTargets(MAX_LANES, keep)
+  const summary = wanted
+    .map(
+      (t) =>
+        `${t.host} score ${t.score.toPrecision(3)}, $${t.incomePerSec.toPrecision(3)}/s, prep ${Math.round(t.prepMs / 1000)}s, ${t.ramUse.toFixed(0)}GB`,
+    )
+    .join('\n  ')
+
+  if (summary !== lastPlan) {
+    ns.print(`plan (kept: ${keep.join(', ') || 'none'}):\n  ${summary}`)
+    lastPlan = summary
+  }
 
   for (const lane of lanes) {
     const info = wanted.find((t) => t.host === lane.info.host)
