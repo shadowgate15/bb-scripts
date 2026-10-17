@@ -1,5 +1,6 @@
 import { entry } from '@/lib/entry'
 import { rootAll } from '@/lib/network/client'
+import { createStatusContext } from '@/lib/status/context'
 import { fmt } from '@/lib/status/format'
 import {
   BATCHER_STATUS_PORT,
@@ -16,7 +17,7 @@ import {
   type PurchaserStub,
   stubPurchaser,
 } from '@/lib/status/purchaser-prototype' // PROTOTYPE data
-import { createStore, type Store } from '@/lib/status/store'
+import { createStore } from '@/lib/status/store'
 import { TabBar, useTab } from '@/lib/status/tabs'
 import { carbonfox as c } from '@/lib/status/theme'
 import { rankTargets } from '@/lib/target/client'
@@ -68,6 +69,9 @@ interface View {
   purchaser: PurchaserStub // PROTOTYPE
 }
 
+const { Provider: StatusProvider, useValue: useView } =
+  createStatusContext<View>()
+
 /** Live status of the hacking services, in a tail window. */
 export const main = entry(async (ns) => {
   ns.ui.openTail()
@@ -79,7 +83,11 @@ export const main = entry(async (ns) => {
   // the store; the loop below only gathers data, since rendering must not
   // call `ns` while the loop is asleep.
   const store = createStore<View | null>(null)
-  ns.printRaw(<Dashboard store={store} />)
+  ns.printRaw(
+    <StatusProvider store={store}>
+      <Dashboard />
+    </StatusProvider>,
+  )
 
   let candidates: TargetInfo[] | null = null
 
@@ -168,8 +176,8 @@ const PHASE: Record<BatcherPhase, { label: string; color: string }> = {
 const clamp01 = (n: number) =>
   Number.isFinite(n) ? Math.min(1, Math.max(0, n)) : 0
 
-function Dashboard({ store }: { store: Store<View | null> }) {
-  const view = React.useSyncExternalStore(store.subscribe, store.get)
+function Dashboard() {
+  const view = useView()
   const [tab, setTab] = useTab()
 
   if (view === null) {
