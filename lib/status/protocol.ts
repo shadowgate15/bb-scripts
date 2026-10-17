@@ -1,5 +1,6 @@
 import type { BatchSizes } from '../batch'
 import type { Purchase } from '../purchaser/plan'
+import type { Reserve } from '../purchaser/reserve'
 
 /**
  * Port the batcher keeps its latest snapshot on (clear + write). Readers
@@ -89,6 +90,8 @@ export interface PurchaserStatus {
   done: boolean
   /** What it is saving for, ignoring the budget; null if nothing to buy. */
   next: Purchase | null
+  /** A hand-bought item whose price it leaves untouched; null once all are owned. */
+  reserve: Reserve | null
   /** RAM of each cloud server we own, in GB. */
   cloudRams: number[]
   cloudLimit: number

@@ -13,6 +13,7 @@ import {
   type PurchaseState,
   SPEND_FRACTION,
 } from '@/lib/purchaser/plan'
+import { nextReserve, type Reserve } from '@/lib/purchaser/reserve'
 import {
   PURCHASER_STATUS_PORT,
   type PurchaserStatus,
@@ -53,7 +54,7 @@ export const main = entry(async (ns) => {
 
     const done = isDone(state)
 
-    publish(ns, state, done, recent)
+    publish(ns, state, done, recent, reserveFor(ns))
 
     // Free our RAM once there's nothing left to buy.
     if (done) {
@@ -66,17 +67,24 @@ export const main = entry(async (ns) => {
   }
 })
 
+/** The TOR or darkweb purchase the player still has to make, if any. */
+function reserveFor(ns: NS): Reserve | null {
+  return nextReserve(ns.hasTorRouter(), (file) => ns.fileExists(file, 'home'))
+}
+
 /** Keeps the latest snapshot on the status port (clear + write). */
 function publish(
   ns: NS,
   state: PurchaseState,
   done: boolean,
   recent: PurchaserStatus['recent'],
+  reserve: Reserve | null,
 ) {
   const status: PurchaserStatus = {
     updatedAt: Date.now(),
     done,
     next: nextTarget(state),
+    reserve,
     cloudRams: state.servers.map((s) => s.ram),
     cloudLimit: state.serverLimit,
     cloudRamLimit: state.ramLimit,
@@ -94,8 +102,13 @@ async function readState(ns: NS): Promise<PurchaseState> {
     ? await quoteHomeUpgrade().catch(() => null)
     : null
 
+  const spare = Math.max(
+    0,
+    ns.getServerMoneyAvailable('home') - (reserveFor(ns)?.cost ?? 0),
+  )
+
   return {
-    budget: ns.getServerMoneyAvailable('home') * SPEND_FRACTION,
+    budget: spare * SPEND_FRACTION,
     servers: (await cloudServers()).map((host) => ({
       host,
       ram: ns.getServerMaxRam(host),

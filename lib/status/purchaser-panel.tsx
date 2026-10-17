@@ -67,7 +67,8 @@ export function PurchaserPanel({
   }
 
   const { next } = status
-  const budget = cash * SPEND_FRACTION
+  const spare = Math.max(0, cash - (status.reserve?.cost ?? 0))
+  const budget = spare * SPEND_FRACTION
   const share = next === null ? 0 : Math.min(1, budget / next.cost)
   const missing = next === null ? 0 : Math.max(0, next.cost - budget)
   // Only a share of income is spendable on one purchase, so the budget grows
@@ -109,6 +110,12 @@ export function PurchaserPanel({
         </>
       )}
 
+      {status.reserve && (
+        <div style={{ ...dim, color: c.magenta }}>
+          keeping ${fmt.number(status.reserve.cost, 2)} for{' '}
+          {status.reserve.item}
+        </div>
+      )}
       <div style={dim}>
         {status.cloudRams.length}/{status.cloudLimit} cloud servers
         {status.cloudRams.length > 0 &&
