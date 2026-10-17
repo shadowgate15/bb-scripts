@@ -8,14 +8,19 @@ import { getServers } from '@/lib/network/client'
 import {
   isDone,
   nextPurchase,
+  nextTarget,
   type Purchase,
   type PurchaseState,
+  SPEND_FRACTION,
 } from '@/lib/purchaser/plan'
+import {
+  PURCHASER_STATUS_PORT,
+  type PurchaserStatus,
+} from '@/lib/status/protocol'
 
 const CLOUD_PREFIX = 'cloud-'
-/** Share of current cash a single purchase may use. */
-const SPEND_FRACTION = 0.5
 const TICK_MS = 10_000
+const RECENT_KEPT = 3
 
 /** Our purchased servers, from the network service's scan. */
 async function cloudServers(): Promise<string[]> {
@@ -30,6 +35,8 @@ async function cloudServers(): Promise<string[]> {
 export const main = entry(async (ns) => {
   ns.disableLog('sleep')
 
+  const recent: PurchaserStatus['recent'] = []
+
   while (true) {
     let state = await readState(ns)
 
@@ -39,11 +46,17 @@ export const main = entry(async (ns) => {
 
       if (purchase === null || !(await execute(ns, purchase))) break
 
+      recent.unshift({ at: Date.now(), purchase })
+      recent.length = Math.min(recent.length, RECENT_KEPT)
       state = await readState(ns)
     }
 
+    const done = isDone(state)
+
+    publish(ns, state, done, recent)
+
     // Free our RAM once there's nothing left to buy.
-    if (isDone(state)) {
+    if (done) {
       ns.print('everything is purchased; exiting')
 
       return
@@ -52,6 +65,29 @@ export const main = entry(async (ns) => {
     await ns.sleep(TICK_MS)
   }
 })
+
+/** Keeps the latest snapshot on the status port (clear + write). */
+function publish(
+  ns: NS,
+  state: PurchaseState,
+  done: boolean,
+  recent: PurchaserStatus['recent'],
+) {
+  const status: PurchaserStatus = {
+    updatedAt: Date.now(),
+    done,
+    next: nextTarget(state),
+    cloudRams: state.servers.map((s) => s.ram),
+    cloudLimit: state.serverLimit,
+    cloudRamLimit: state.ramLimit,
+    home: state.home && { ram: state.home.ram, cores: state.home.cores },
+    recent: [...recent],
+  }
+  const port = ns.getPortHandle(PURCHASER_STATUS_PORT)
+
+  port.clear()
+  port.write(status)
+}
 
 async function readState(ns: NS): Promise<PurchaseState> {
   const home = ns.isRunning('home-upgrade.js', 'home')

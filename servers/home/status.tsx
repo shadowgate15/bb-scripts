@@ -7,16 +7,15 @@ import {
   type BatcherPhase,
   type BatcherStatus,
   isBatcherStatus,
+  isPurchaserStatus,
   isSharerStatus,
   type LaneStatus,
+  PURCHASER_STATUS_PORT,
+  type PurchaserStatus,
   SHARER_STATUS_PORT,
   type SharerStatus,
 } from '@/lib/status/protocol'
-import {
-  NextBuy,
-  type PurchaserStub,
-  stubPurchaser,
-} from '@/lib/status/purchaser-prototype' // PROTOTYPE data
+import { PurchaserPanel } from '@/lib/status/purchaser-panel'
 import { createStore } from '@/lib/status/store'
 import { TabBar, useTab } from '@/lib/status/tabs'
 import { carbonfox as c } from '@/lib/status/theme'
@@ -66,7 +65,9 @@ interface View {
   pool: Pool | null
   income: number
   candidates: TargetInfo[] | null
-  purchaser: PurchaserStub // PROTOTYPE
+  purchaser: PurchaserStatus | null
+  /** Cash on hand, live, so purchase progress moves between purchaser ticks. */
+  cash: number
 }
 
 const { Provider: StatusProvider, useValue: useView } =
@@ -109,7 +110,8 @@ export const main = entry(async (ns) => {
       pool: await readPool(ns),
       income: ns.getTotalScriptIncome()[0],
       candidates,
-      purchaser: stubPurchaser(ns.getTotalScriptIncome()[0]), // PROTOTYPE
+      purchaser: readPurchaser(ns),
+      cash: ns.getServerMoneyAvailable('home'),
     }
 
     store.set(view)
@@ -133,6 +135,16 @@ function readSharer(ns: NS): SharerStatus | null {
   const value = ns.getPortHandle(SHARER_STATUS_PORT).peek()
 
   return isSharerStatus(value) && Date.now() - value.updatedAt < STALE_MS
+    ? value
+    : null
+}
+
+/** The purchaser's snapshot; kept once it is done, since it then exits. */
+function readPurchaser(ns: NS): PurchaserStatus | null {
+  const value = ns.getPortHandle(PURCHASER_STATUS_PORT).peek()
+
+  return isPurchaserStatus(value) &&
+    (value.done || Date.now() - value.updatedAt < STALE_MS)
     ? value
     : null
 }
@@ -197,6 +209,7 @@ function Dashboard() {
     income,
     candidates,
     purchaser,
+    cash,
   } = view
   const phase = offline
     ? { label: 'OFFLINE', color: c.red }
@@ -267,7 +280,14 @@ function Dashboard() {
         </>
       )}
 
-      {tab === 'purchaser' && <NextBuy p={purchaser} income={income} />}
+      {tab === 'purchaser' && (
+        <PurchaserPanel
+          status={purchaser}
+          cash={cash}
+          income={income}
+          now={Date.now()}
+        />
+      )}
 
       {tab === 'pool' && (
         <>
